@@ -1,3 +1,25 @@
+
+
+
+
+/**
+issue: doesnt fetch all conversions to google sheet, stops on second project, but fetchs all first project convs.
+Firebase-managed functions
+saveToken
+exportsApi
+whatsappWebhook
+cleanupFirestoreHttp
+👉 Managed by firebase deploy
+
+
+
+gcloud-managed function
+exportConversionsToSheet
+👉 Managed by gcloud functions deploy
+
+ */
+
+
 // functions/index.js
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
@@ -1014,6 +1036,476 @@ app.post('/queueAdjustment', requireSecret, express.json(), async (req, res) => 
 
 // Export the express app as a single Cloud Function endpoint
 exports.exportsApi = functions.https.onRequest(app);
+
+
+
+
+/**
+Schedule All Conversion exports!!!
+Schedule All Conversion exports!!!
+Schedule All Conversion exports!!!
+https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/exportConversionsToSheet
+
+To observe logs for the exports (Google Cloud LOGS):
+resource.type="cloud_run_revision"
+resource.labels.service_name="exportconversionstosheet"
+
+Forcing an export NOW!
+gcloud scheduler jobs run export-conversions-test --location us-central1
+
+To deploy/edit the funtion
+gcloud functions deploy exportConversionsToSheet --gen2 --region us-central1 --runtime nodejs22 --entry-point exportConversionsToSheet --trigger-http --memory 8Gi --set-env-vars SHEET_ID=1swmdB-6bs9FJo4PRp6yDZcmyf5k_xDH2cCfVVpJnn68,SHEET_RANGE=Conversions_Sheet!A:Z --service-account 76112556375-compute@developer.gserviceaccount.com
+ */
+
+
+
+exports.exportConversionsToSheet = async (req, res) => {
+  const { google } = require('googleapis');
+
+  // CONFIG (override via env vars)
+  const SHEET_ID = process.env.SHEET_ID;
+  const SHEET_RANGE = process.env.SHEET_RANGE || 'Sheet1!A:Z';
+  const APPEND_BATCH_SIZE = Number(process.env.APPEND_BATCH_SIZE || 50); // tune: 25-50 recommended
+  const FIRESTORE_RETRY_ATTEMPTS = Number(process.env.FIRESTORE_RETRY_ATTEMPTS || 3);
+  const FIRESTORE_RETRY_DELAY_MS = Number(process.env.FIRESTORE_RETRY_DELAY_MS || 1000);
+  const PENDING_EXPORTS_COLLECTION = process.env.PENDING_EXPORTS_COLLECTION || 'pendingExports';
+  const EXPORT_JOB_PREFIX = process.env.EXPORT_JOB_PREFIX || 'cloudfunc-export';
+
+  if (!SHEET_ID) {
+    console.error('Missing SHEET_ID env var');
+    return res.status(500).json({ ok: false, error: 'Missing SHEET_ID env var' });
+  }
+
+  // Helper: format a single row to match your sheet columns:
+  // Project ID | Google Click ID | Conversion Name | Conversion Time | Conversion Value | Conversion Currency | Order ID | Status | Uploaded At
+  function formatRow(docData) {
+    const projectId = docData.projectId || '';
+    const gclid = docData.gclid || '';
+    const conversionName = docData.conversion_name || '';
+    // Use used_at if present (Firestore Timestamp), else ts (ISO string)
+    let conversionTime = '';
+    if (docData.used_at && typeof docData.used_at.toDate === 'function') {
+      conversionTime = docData.used_at.toDate().toISOString();
+    } else if (docData.used_at && typeof docData.used_at === 'string') {
+      conversionTime = docData.used_at;
+    } else if (docData.ts) {
+      conversionTime = docData.ts;
+    }
+    const conversionValue = docData.conversion_value_final ?? docData.conversion_value_initial ?? docData.lead_value_estimate ?? '';
+    const conversionCurrency = docData.conversion_value_currency || '';
+    const orderId = docData.token || '';
+    const status = docData.used === true ? 'used' : (docData.conversion_value_uploaded === true ? 'uploaded' : 'click');
+    const uploadedAt = new Date().toISOString();
+    return [
+      projectId,
+      gclid,
+      conversionName,
+      conversionTime,
+      conversionValue,
+      conversionCurrency,
+      orderId,
+      status,
+      uploadedAt
+    ];
+  }
+
+  // Append chunk function + safe Firestore marking
+  async function appendChunksAndMarkSafely(exportItems, sheetsClient, jobId) {
+    let appendedTotal = 0;
+
+    for (let i = 0; i < exportItems.length; i += APPEND_BATCH_SIZE) {
+      const chunk = exportItems.slice(i, i + APPEND_BATCH_SIZE);
+      const rows = chunk.map(it => formatRow(it.data));
+
+      console.log(`Appending chunk ${i / APPEND_BATCH_SIZE + 1} (rows=${rows.length})`);
+
+      // Attempt to append chunk to Sheets
+      let appendRes;
+      try {
+        appendRes = await sheetsClient.spreadsheets.values.append({
+          spreadsheetId: SHEET_ID,
+          range: SHEET_RANGE,
+          valueInputOption: 'USER_ENTERED',
+          insertDataOption: 'INSERT_ROWS',
+          requestBody: { values: rows }
+        });
+      } catch (err) {
+        console.error(`Sheets API append failed for chunk starting at index ${i}:`, err && (err.message || err));
+        throw new Error('Sheets append failed: ' + (err && (err.message || String(err))));
+      }
+
+      // Validate Sheets response
+      const updates = appendRes && appendRes.data && appendRes.data.updates;
+      if (!updates || (!updates.updatedRows && !updates.updatedRange)) {
+        console.error('Sheets append returned unexpected response for chunk', { appendRes });
+        throw new Error('Sheets append returned no updates');
+      }
+
+      const updatedRows = updates.updatedRows || chunk.length;
+      if (updatedRows < chunk.length) {
+        console.error('Sheets append updated fewer rows than sent', { sent: chunk.length, updatedRows, updates });
+        throw new Error('Partial append detected');
+      }
+
+      const updatedRange = updates.updatedRange || null;
+      console.log('Sheets append succeeded', { updatedRows, updatedRange });
+
+      // Now mark the docs in Firestore as exported (with retries)
+      const refs = chunk.map(it => it.ref);
+      const now = admin.firestore.FieldValue.serverTimestamp();
+
+      const batchUpdate = async () => {
+        const batch = db.batch();
+        refs.forEach(ref => {
+          batch.update(ref, {
+            google_sheet_exported: true,
+            google_sheet_export_job: jobId,
+            google_sheet_exported_at: now,
+            sales_sheet_last_uploaded_at: now,
+            sales_sheet_quality_uploaded: true
+          });
+        });
+        await batch.commit();
+      };
+
+      let success = false;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= FIRESTORE_RETRY_ATTEMPTS; attempt++) {
+        try {
+          await batchUpdate();
+          success = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+          console.error(`Firestore batch update failed (attempt ${attempt})`, err && (err.message || err));
+          // backoff
+          await new Promise(r => setTimeout(r, FIRESTORE_RETRY_DELAY_MS * attempt));
+        }
+      }
+
+      if (!success) {
+        // Write reconciliation doc so we don't lose data and can recover later.
+        const pendingDoc = {
+          jobId,
+          sheetId: SHEET_ID,
+          updatedRange,
+          tokens: chunk.map(it => it.data.token || null),
+          docPaths: chunk.map(it => it.ref.path),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: 'pending_firestore_update',
+          lastError: String(lastErr && (lastErr.message || lastErr))
+        };
+
+        try {
+          const pendingId = `${jobId}-${i}`;
+          await db.collection(PENDING_EXPORTS_COLLECTION).doc(pendingId).set(pendingDoc);
+          console.error('WROTE pendingExports doc for later reconciliation', pendingDoc);
+        } catch (err) {
+          console.error('FAILED to write pendingExports doc (CRITICAL). Manual intervention required.', err && (err.message || err));
+        }
+
+        // Important: do NOT mark any of these docs as exported. Stop processing and surface error.
+        throw new Error('Failed to mark exported docs after append; pendingExports written.');
+      }
+
+      appendedTotal += updatedRows;
+      // Continue to next chunk
+    } // end for-chunks
+
+    return appendedTotal;
+  } // end appendChunksAndMarkSafely
+
+  // MAIN
+  try {
+    console.log('Export job started');
+
+    // build Sheets client using ADC (function's service account)
+    const auth = await google.auth.getClient({
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    // Generate job id for tracing
+    const jobId = `${EXPORT_JOB_PREFIX}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Fetch candidates: collectionGroup('clicks') and filter locally
+    // (Firestore does not support 'field not exists' easily; keep local filter small)
+    const snap = await db.collectionGroup('clicks').get();
+    const exportItems = [];
+    for (const doc of snap.docs) {
+      const d = doc.data() || {};
+      // Skip already exported
+      if (d.google_sheet_exported === true) continue;
+      // Eligibility rule: either the record was 'used' (user sent WA) OR conversion uploaded flag set
+      const isUploaded = d.conversion_value_uploaded === true;
+      const isUsed = d.used === true;
+      if (!(isUploaded || isUsed)) continue;
+      // Optionally, you can filter by projectId if needed. Keep as-is to support multi-project
+      exportItems.push({ ref: doc.ref, data: d });
+    }
+
+    if (!exportItems.length) {
+      console.log('No eligible conversions found');
+      return res.status(200).json({ ok: true, exported: 0 });
+    }
+
+    console.log(`Found ${exportItems.length} eligible conversions. Starting append in chunks of ${APPEND_BATCH_SIZE}`);
+
+    // Perform chunked append + safe marking
+    const exportedCount = await appendChunksAndMarkSafely(exportItems, sheets, jobId);
+    console.log('Export completed. total exported:', exportedCount);
+
+    return res.status(200).json({ ok: true, exported: exportedCount, jobId });
+  } catch (err) {
+    console.error('Export job failed:', err && (err.message || err));
+    // Surface the error to Scheduler so it may retry per job config
+    return res.status(500).json({ ok: false, error: String(err && (err.message || err)) });
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+DATABASE CLEANUP
+DATABASE CLEANUP
+DATABASE CLEANUP
+
+Fliter logs:
+
+resource.type="cloud_run_revision"
+resource.labels.service_name="cleanupfirestorehttp"
+
+Clean your db from browser:
+https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/cleanupFirestoreHttp?dryRun=false
+
+Change how often should the clean up process happen from Google Cloud, 
+go to CloudScheduler and change the frequency
+every minute: * * * *
+every 5 minutes: *`/5 * * * !!!(remove the ` )
+every hour: 0 * * *
+every day(24h): 0 0 * *
+ */
+
+// ---------- Final Cleanup Function (drop-in) ----------
+(function () {
+  // Resolve existing globals or require them
+  let fns;
+  try { fns = functions; } catch (e) { fns = require('firebase-functions'); }
+
+  let adm;
+  try { adm = admin; } catch (e) { adm = require('firebase-admin'); if (!adm.apps || adm.apps.length === 0) adm.initializeApp(); }
+
+  let database;
+  try { database = db; } catch (e) { database = adm.firestore(); }
+
+  // ============= CONFIG =============
+  const UNUSED_TTL_DAYS = 1;                 // how old must a token with used = false be to get deleted during the daily clean ups?
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const UNUSED_TTL_MS = UNUSED_TTL_DAYS * MS_PER_DAY;
+
+  const CLEANUP_DRY_RUN = false;             // <-- true to only log; false to actually delete
+  const SCHEDULE_EXPRESSION = 'every 24 hours';
+  const TIMEZONE = 'UTC';
+  // ==================================
+
+  async function nowMillis() { return Date.now(); }
+
+  // Robust ts parsing: Firestore Timestamp, ISO string, ms number
+  function parseTsToMs(ts) {
+    if (!ts) return null;
+    if (typeof ts.toMillis === 'function') {
+      try { return ts.toMillis(); } catch (e) { /* fallthrough */ }
+    }
+    if (typeof ts === 'number') return ts;
+    if (typeof ts === 'string') {
+      const p = Date.parse(ts);
+      return Number.isNaN(p) ? null : p;
+    }
+    return null;
+  }
+
+  async function runCleanupLogic(opts = {}) {
+    const dryRun = (typeof opts.dryRun === 'boolean') ? opts.dryRun : CLEANUP_DRY_RUN;
+    const now = await nowMillis();
+    const cutoffMs = now - UNUSED_TTL_MS;
+
+    console.log('🧹 Cleanup job started');
+    console.log('Dry run:', dryRun);
+    console.log('Unused TTL (days):', UNUSED_TTL_DAYS);
+    console.log('Schedule:', SCHEDULE_EXPRESSION, 'Timezone:', TIMEZONE);
+
+    let considered = 0;
+    let deletedCount = 0;
+    let matchedTestCount = 0;
+    let matchedExpiredCount = 0;
+
+    try {
+      const snap = await database.collectionGroup('clicks').get();
+      considered = snap.size;
+
+      for (const doc of snap.docs) {
+        const data = doc.data() || {};
+        const ref = doc.ref;
+
+        const token = (data.token && String(data.token)) || doc.id;
+        const projectId = data.projectId || '(unknown project)';
+        const gclidRaw = (typeof data.gclid === 'string') ? data.gclid : (data.gclid ? String(data.gclid) : '');
+        const gclid = gclidRaw || '';
+        const used = data.used === true;
+
+        const tsMs = parseTsToMs(data.ts || data.createdAt || data.ts_ms || data.timestamp);
+        const ageMs = tsMs ? (now - tsMs) : null;
+        const ageDays = ageMs ? (ageMs / MS_PER_DAY) : null;
+        const ageMinutes = ageMs ? Math.round(ageMs / (60 * 1000)) : null;
+
+        const gclidIsTest = (gclid || '').toLowerCase().includes('test');
+
+        // DECIDE reason:
+        // Rule A: immediate delete for test gclid (regardless of used)
+        // Rule B: delete any unused token older than TTL (no test check)
+        let reason = null;
+        if (gclidIsTest) {
+          reason = 'test_gclid';
+          matchedTestCount++;
+        } else if (!used && tsMs && tsMs <= cutoffMs) {
+          reason = 'unused_expired';
+          matchedExpiredCount++;
+        }
+
+        if (!reason) {
+          // helpful debug logs for records that might be close to expiry
+          if (!used && tsMs) {
+            const minutesLeft = Math.round((cutoffMs - tsMs) / (60 * 1000));
+            if (minutesLeft <= 60 && minutesLeft > 0) {
+              console.log(`[CLEANUP-INFO] token=${token} will expire in ${minutesLeft} minutes (ageMinutes=${ageMinutes})`);
+            }
+          }
+          continue;
+        }
+
+        // LOG candidate (before deletion)
+        console.log(`[CLEANUP ${dryRun ? 'DRY-RUN' : 'DELETE'}]`, JSON.stringify({
+          projectId,
+          token,
+          reason,
+          used,
+          ageDays: ageDays !== null ? Number(ageDays.toFixed(2)) : 'unknown',
+          ageMinutes: ageMinutes !== null ? ageMinutes : 'unknown',
+          gclid,
+          clickPath: ref.path
+        }));
+
+        // PERFORM deletion (click doc + corresponding tokenIndex entry) if not dry-run
+        if (!dryRun) {
+          try {
+            // Delete the click doc
+            await ref.delete();
+
+            // Now attempt to delete corresponding tokenIndex entry
+            if (token) {
+              try {
+                const idxRef = database.doc(`tokenIndex/${token}`);
+                const idxSnap = await idxRef.get();
+                if (idxSnap.exists) {
+                  const idxData = idxSnap.data() || {};
+                  // Safety: remove only if clickPath matches the doc path (if provided), otherwise still remove
+                  if (!idxData.clickPath || idxData.clickPath === ref.path) {
+                    await idxRef.delete();
+                    console.log(`[CLEANUP] tokenIndex/${token} deleted (matched clickPath)`);
+                  } else {
+                    // If clickPath mismatch, log and still delete? We'll be conservative and delete anyway to keep index clean.
+                    // If you want stricter safety, change to skip deletion here.
+                    await idxRef.delete();
+                    console.log(`[CLEANUP] tokenIndex/${token} deleted (clickPath mismatch: index=${idxData.clickPath} expected=${ref.path})`);
+                  }
+                } else {
+                  console.log(`[CLEANUP] tokenIndex/${token} not found (already missing)`);
+                }
+              } catch (idxErr) {
+                console.error(`[CLEANUP] failed to delete tokenIndex/${token}`, idxErr && idxErr.stack ? idxErr.stack : idxErr);
+              }
+            }
+
+            deletedCount++;
+            console.log(`[CLEANUP] deleted click doc ${ref.path}`);
+          } catch (delErr) {
+            console.error(`[CLEANUP] failed to delete click doc ${ref.path}`, delErr && delErr.stack ? delErr.stack : delErr);
+          }
+        }
+      } // end for
+
+      console.log(`🧹 Cleanup job finished. considered=${considered}, matchedTest=${matchedTestCount}, matchedExpired=${matchedExpiredCount}, deleted=${deletedCount}`);
+      return { considered, matchedTestCount, matchedExpiredCount, deletedCount };
+    } catch (err) {
+      console.error('Cleanup job failed:', err && err.stack ? err.stack : err);
+      throw err;
+    }
+  } // end runCleanupLogic
+
+  // Register scheduled job if supported; otherwise expose HTTP fallback
+  try {
+    if (fns && fns.pubsub && typeof fns.pubsub.schedule === 'function') {
+      if (!exports.cleanupFirestore) {
+        exports.cleanupFirestore = fns.pubsub
+          .schedule(SCHEDULE_EXPRESSION)
+          .timeZone(TIMEZONE)
+          .onRun(async (context) => {
+            await runCleanupLogic();
+            return null;
+          });
+        console.log('cleanupFirestore scheduled via functions.pubsub.schedule:', SCHEDULE_EXPRESSION);
+      } else {
+        console.log('cleanupFirestore already exported, skipping schedule registration');
+      }
+    } else {
+      // create HTTP fallback: allow one-off override with ?dryRun=true|false
+      if (!exports.cleanupFirestoreHttp) {
+        exports.cleanupFirestoreHttp = fns.https.onRequest(async (req, res) => {
+          try {
+            // Query or body param can override dryRun for one-off runs
+            let dryRun = CLEANUP_DRY_RUN;
+            const q = req.query || {};
+            const b = req.body || {};
+            if (typeof q.dryRun !== 'undefined') {
+              dryRun = (String(q.dryRun) !== 'false');
+            } else if (typeof b.dryRun !== 'undefined') {
+              dryRun = (b.dryRun !== false && String(b.dryRun) !== 'false');
+            }
+            const result = await runCleanupLogic({ dryRun });
+            res.status(200).json({ ok: true, result });
+          } catch (err) {
+            console.error('cleanupFirestoreHttp error:', err && err.stack ? err.stack : err);
+            res.status(500).json({ ok: false, error: String(err) });
+          }
+        });
+        console.log('cleanupFirestoreHttp registered (fallback)');
+      } else {
+        console.log('cleanupFirestoreHttp already exported, skipping http registration');
+      }
+    }
+  } catch (err) {
+    console.error('Failed to register cleanup trigger:', err && err.stack ? err.stack : err);
+    // do not throw here to avoid breaking module load
+  }
+})(); 
+// ---------- end final cleanup ----------
+
+
 
 
 
