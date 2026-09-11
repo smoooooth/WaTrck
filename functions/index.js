@@ -239,30 +239,130 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       } catch (e) { console.error('Bridge Setup Error:', e); }
 
 
-      // --- B. PARSE MESSAGE ---
-      const body = req.body && typeof req.body === 'object' ? req.body : JSON.parse(req.rawBody ? req.rawBody.toString() : '{}');
-      
-      let messages = [];
-      if (Array.isArray(body.entry)) {
-        for (const entry of body.entry) {
-          if (!entry.changes) continue;
-          for (const ch of entry.changes) {
-            const val = ch.value || {};
-            if (Array.isArray(val.messages)) messages = messages.concat(val.messages);
-          }
-        }
-      }
+// --- B. PARSE MESSAGE + CONTACT IDENTITY ---
+const body = req.body && typeof req.body === 'object'
+  ? req.body
+  : JSON.parse(req.rawBody ? req.rawBody.toString() : '{}');
 
-      if (!messages.length) return res.status(200).send('no messages');
+let messageEvents = [];
 
-      // --- C. PROCESS LOOP ---
+if (Array.isArray(body.entry)) {
+  for (const entry of body.entry) {
+    if (!Array.isArray(entry.changes)) continue;
+
+    for (const ch of entry.changes) {
+      const val = ch.value || {};
+      const contacts = Array.isArray(val.contacts) ? val.contacts : [];
+      const messages = Array.isArray(val.messages) ? val.messages : [];
+
       for (const msg of messages) {
-        try {
-          const from = msg.from || 'unknown'; // The Phone Number
-          const msgId = msg.id || msg._id || 'no-id';
-          const text = (msg.text && msg.text.body) || '[Media/Other]';
-          const type = msg.type || 'unknown';
-          const timestamp = msg.timestamp || Date.now() / 1000;
+        const rawFrom = msg.from ? String(msg.from).trim() : '';
+
+        const messageBsuid = String(
+          msg.from_user_id ||
+          msg.user_id ||
+          ''
+        ).trim();
+
+        // Find the contact belonging to this message.
+        const contact =
+          contacts.find(c => {
+            const contactWaId = c && c.wa_id
+              ? String(c.wa_id).trim()
+              : '';
+
+            const contactUserId = c && c.user_id
+              ? String(c.user_id).trim()
+              : '';
+
+            return (
+              (messageBsuid && contactUserId === messageBsuid) ||
+              (rawFrom && contactWaId === rawFrom) ||
+              (rawFrom && contactUserId === rawFrom)
+            );
+          }) ||
+          contacts[0] ||
+          null;
+
+        messageEvents.push({
+          msg,
+          contact
+        });
+      }
+    }
+  }
+}
+
+if (!messageEvents.length) {
+  return res.status(200).send('no messages');
+}
+
+// --- C. PROCESS LOOP ---
+for (const event of messageEvents) {
+  try {
+    const msg = event.msg;
+    const contact = event.contact;
+
+    const msgId = msg.id || msg._id || 'no-id';
+    const text = (msg.text && msg.text.body) || '[Media/Other]';
+    const type = msg.type || 'unknown';
+    const timestamp = msg.timestamp || Date.now() / 1000;
+
+    const rawFrom = msg.from
+      ? String(msg.from).trim()
+      : '';
+
+    const contactWaId =
+      contact && contact.wa_id
+        ? String(contact.wa_id).trim()
+        : '';
+
+    const looksLikePhone = value =>
+      /^\+?\d{7,15}$/.test(String(value || '').trim());
+
+    // Phone number when WhatsApp exposes one.
+    const whatsappPhone = looksLikePhone(rawFrom)
+      ? rawFrom.replace(/^\+/, '')
+      : looksLikePhone(contactWaId)
+        ? contactWaId.replace(/^\+/, '')
+        : null;
+
+    // Stable WhatsApp Business-Scoped User ID.
+    const whatsappBsuid =
+      (msg.from_user_id && String(msg.from_user_id).trim()) ||
+      (msg.user_id && String(msg.user_id).trim()) ||
+      (contact && contact.user_id
+        ? String(contact.user_id).trim()
+        : '') ||
+      (!looksLikePhone(rawFrom) && rawFrom ? rawFrom : '') ||
+      (!looksLikePhone(contactWaId) && contactWaId
+        ? contactWaId
+        : '') ||
+      null;
+
+    const whatsappUsername =
+      contact &&
+      contact.profile &&
+      contact.profile.username
+        ? String(contact.profile.username).trim()
+        : null;
+
+    const whatsappProfileName =
+      contact &&
+      contact.profile &&
+      contact.profile.name
+        ? String(contact.profile.name).trim()
+        : null;
+
+    // Preserve old phone-based identity when a phone exists.
+    // Fall back to BSUID for privacy/username users.
+    const senderId =
+      whatsappPhone ||
+      whatsappBsuid ||
+      rawFrom ||
+      null;
+
+    const from = senderId || 'unknown';
 
           // <--- 1. ALERT TEST TRIGGER (Keep this for testing) --->
           if (text === 'ForceTestError123') {
@@ -271,35 +371,60 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           }
 
           // <--- 2. ORGANIZED FIRESTORE BACKUP (The Smart Way) --->
-          if (msgId && from !== 'unknown') {
-            const userDocRef = db.collection('whatsapp_conversations').doc(from);
-            const messagesCollection = userDocRef.collection('messages');
+            if (msgId && from !== 'unknown') {
+              // Firestore document IDs cannot contain "/".
+              const conversationId = String(from).replace(/\//g, '_');
 
-            // Batch write: Update the parent "User" doc AND save the "Message"
-            const batch = db.batch();
+              const userDocRef =
+                db.collection('whatsapp_conversations').doc(conversationId);
 
-            // 1. Update the "Phone Book" entry (Parent Doc)
-            // This lets you see a list of users and when they last messaged
-            batch.set(userDocRef, {
-                last_active: admin.firestore.FieldValue.serverTimestamp(),
-                last_message_preview: text.substring(0, 50), // First 50 chars
-                phone_number: from
-            }, { merge: true });
+              const messagesCollection =
+                userDocRef.collection('messages');
 
-            // 2. Save the actual message in the sub-collection
-            const messageDocRef = messagesCollection.doc(msgId);
-            batch.set(messageDocRef, {
+              const batch = db.batch();
+
+              batch.set(userDocRef, {
+                last_active:
+                  admin.firestore.FieldValue.serverTimestamp(),
+
+                last_message_preview:
+                  text.substring(0, 50),
+
+                // Stable identity information
+                whatsapp_sender_id: from,
+                phone_number: whatsappPhone,
+                whatsapp_bsuid: whatsappBsuid,
+                whatsapp_username: whatsappUsername,
+                whatsapp_profile_name: whatsappProfileName
+              }, { merge: true });
+
+              const messageDocRef =
+                messagesCollection.doc(msgId);
+
+              batch.set(messageDocRef, {
                 from: from,
+
+                whatsapp_sender_id: from,
+                whatsapp_phone: whatsappPhone,
+                whatsapp_bsuid: whatsappBsuid,
+                whatsapp_username: whatsappUsername,
+                whatsapp_profile_name: whatsappProfileName,
+
                 msg_id: msgId,
                 text_body: text,
                 message_type: type,
                 meta_timestamp: timestamp,
-                stored_at: admin.firestore.FieldValue.serverTimestamp(),
-                raw_payload: msg // Full backup of raw data
-            }, { merge: true });
 
-            await batch.commit();
-          }
+                stored_at:
+                  admin.firestore.FieldValue.serverTimestamp(),
+
+                raw_payload: msg,
+
+                contact_payload: contact || null
+              }, { merge: true });
+
+              await batch.commit();
+            }
 
           // <--- 3. YOUR EXISTING TOKEN LOGIC (Keep this exactly as is) --->
           const m = text.match(/#([A-Z0-9]{4,12})/i);
@@ -324,8 +449,19 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           
           await clickRef.update({
             used: true,
-            used_at: admin.firestore.FieldValue.serverTimestamp(),
+            used_at:
+              admin.firestore.FieldValue.serverTimestamp(),
+
+            // Backwards-compatible field:
+            // phone when available, BSUID otherwise.
             whatsapp_from: from,
+
+            // Explicit modern identity fields:
+            whatsapp_phone: whatsappPhone,
+            whatsapp_bsuid: whatsappBsuid,
+            whatsapp_username: whatsappUsername,
+            whatsapp_profile_name: whatsappProfileName,
+
             whatsapp_msg_id: msgId,
             conversion_value_source: 'whatsapp_message'
           });
