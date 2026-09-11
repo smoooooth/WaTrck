@@ -40,10 +40,7 @@ const CHATWOOT_WEBHOOK_URL = "https://wa-chat.auresealtd.com/webhooks/whatsapp/+
 // ---------- CONFIG ---------- Allowed Websites - allowed domains
 const DEFAULT_LEAD_VALUE = 70; // default immediate conversion value
 const ALLOWED_ORIGINS = [
-  'https://aidattrxta.webflow.io',
-  'https://www.davinci-tower-pagani.com',
-  'https://davtowerdubai.webflow.io',
-  'https://aida-muscat-oman.com'
+  'https://www.seaborn-properties.com'
 ];
 // ----------------------------
 
