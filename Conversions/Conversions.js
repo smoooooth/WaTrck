@@ -242,20 +242,38 @@ function ensureSheet(spreadsheet, sheetName, headers) {
  * same GCLID + Qualified
  * same GCLID + Closed
  */
-function getExistingConversionKeys(sheet) {
- const lastRow = sheet.getLastRow();
- const keys = new Set();
- if (lastRow < 2) return keys;
- // Column B = GCLID, Column C = Conversion Name.
- const values = sheet.getRange(2, 2, lastRow - 1, 2).getValues();
- values.forEach(function (row) {
- const gclid = normalizeGclid(row[0]);
- const conversionName = cleanString(row[1]);
- if (gclid && conversionName) {
- keys.add(gclid + '|' + conversionName);
- }
- });
- return keys;
+function getExistingConversionKeys(sheet, isTesting) {
+  const lastRow = sheet.getLastRow();
+  const keys = new Set();
+
+  if (lastRow < 2) return keys;
+
+  // B = GCLID, C = Conversion Name, G = Order ID
+  const values = sheet
+    .getRange(2, 2, lastRow - 1, 6)
+    .getValues();
+
+  values.forEach(function (row) {
+    const gclid = normalizeGclid(row[0]);      // B
+    const conversionName = cleanString(row[1]); // C
+    const orderId = cleanString(row[5]);       // G
+
+    if (!gclid || !conversionName) return;
+
+    if (isTesting) {
+      if (orderId) {
+        keys.add(
+          gclid + '|' + conversionName + '|' + orderId
+        );
+      }
+    } else {
+      keys.add(
+        gclid + '|' + conversionName
+      );
+    }
+  });
+
+  return keys;
 }
 function getExistingOrderIds(sheet, orderIdColumn) {
  const lastRow = sheet.getLastRow();
@@ -352,7 +370,9 @@ function buildConversionRows(items, existingKeys, isTesting) {
  const expectedForThisItem = new Set();
  function satisfyConversion(conversionName, value) {
  if (!conversionName) return;
- const key = gclid + '|' + conversionName;
+const key = isTesting
+  ? gclid + '|' + conversionName + '|' + orderId
+  : gclid + '|' + conversionName;
  // Prevent two identical expected rows inside the same document state.
  if (expectedForThisItem.has(key)) return;
  expectedForThisItem.add(key);
@@ -425,7 +445,8 @@ function processGclidBucket(items, sheet, isTesting) {
  blocked: 0
  };
  }
- const existingKeys = getExistingConversionKeys(sheet);
+const existingKeys =
+  getExistingConversionKeys(sheet, isTesting);
  let rowsAppended = 0;
  let handledCount = 0;
  let blockedCount = 0;
