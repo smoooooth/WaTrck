@@ -540,8 +540,6 @@ for (const event of messageEvents) {
             projectIdFound
           );
           
-          console.log('Token logic executed for', token);
-
         } catch (innerErr) {
           console.error('Error processing single message:', innerErr);
         }
