@@ -33,7 +33,7 @@ const db = admin.firestore();
 const secretClient = new SecretManagerServiceClient();
 
 
-const CHATWOOT_WEBHOOK_URL = "https://wa-chat.seaborn-properties.com/webhooks/whatsapp/+2001034285454";
+const CHATWOOT_WEBHOOK_URL = "https://wa-chat.seaborn-properties.com/webhooks/whatsapp/+201034285454";
 
 
 
