@@ -33,14 +33,15 @@ const db = admin.firestore();
 const secretClient = new SecretManagerServiceClient();
 
 
-const CHATWOOT_WEBHOOK_URL = "https://wa-chat.auresealtd.com/webhooks/whatsapp/+971585927034";
+const CHATWOOT_WEBHOOK_URL = "https://wa-chat.seaborn-properties.com/webhooks/whatsapp/+2001034285454";
 
 
 
 // ---------- CONFIG ---------- Allowed Websites - allowed domains
 const DEFAULT_LEAD_VALUE = 70; // default immediate conversion value
 const ALLOWED_ORIGINS = [
-  'https://www.seaborn-properties.com'
+  'https://www.seaborn-properties.com',
+  'https://fe95b27ee703b3b6a78fb912df565.webflow.io'
 ];
 // ----------------------------
 
