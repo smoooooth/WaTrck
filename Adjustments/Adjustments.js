@@ -257,27 +257,48 @@ function appendAdjustmentRowsBatch(rows) {
       const projectForItem = item.project || item.projectId || getProjectIdRuntime() || '';
 
 
-      function pushRowForConv(convName) {
-        // build list of conversion names we should push adjustments for (unique)
-        const convNames = [];
-        if (convPrimary) convNames.push(convPrimary);
-        if (convSales && convSales !== '') convNames.push(convSales);
-        if (item.conversion_name_sales_qualified && item.conversion_name_sales_qualified !== '') convNames.push(String(item.conversion_name_sales_qualified).trim());
+        // Decide which EXISTING conversion action this adjustment belongs to.
+        //
+        // 0 = Unqualified → adjust original Contact conversion only.
+        // 1 = Qualified   → adjust Qualified conversion only.
+        // 2 = Closed      → adjust Closed conversion only.
+        //
+        // For legacy/manual adjustments with no sales quality,
+        // preserve the old behavior of targeting the base conversion.
 
+        const qualityCode =
+          (typeof item.sales_sheet_updated_quality === 'number')
+            ? item.sales_sheet_updated_quality
+            : null;
 
-        // dedupe and push each distinct conversion name (skip if same as primary already pushed)
-        const seenConv = new Set();
-        convNames.forEach(convName => {
-          if (!convName) return;
-          const trimmed = String(convName).trim();
-          if (seenConv.has(trimmed)) return;
-          seenConv.add(trimmed);
-          const key = gclid + '|' + uploadV + '|' + trimmed;
-          if (existingKeys.has(key)) {
-            if (DEBUG) Logger.log('appendAdjustmentRowsBatch: skipping existing key %s', key);
-            return;
+        let targetConversionName = null;
+
+        if (qualityCode === 0) {
+          // Unqualified: zero the original Contact conversion.
+          targetConversionName = convPrimary;
+        } else if (qualityCode === 1 || qualityCode === 2) {
+          // Qualified / Closed: adjust only the CURRENT sales-stage conversion.
+          targetConversionName = convSales;
+        } else {
+          // Legacy/manual adjustment fallback.
+          targetConversionName = convPrimary;
+        }
+
+        if (!targetConversionName) {
+          if (DEBUG) {
+            Logger.log(
+              'appendAdjustmentRowsBatch: no target conversion for order_id=%s quality=%s',
+              item.order_id || '',
+              qualityCode
+            );
           }
-          // push with Project ID as first column
+          return;
+        }
+
+        const trimmed = String(targetConversionName).trim();
+        const key = gclid + '|' + uploadV + '|' + trimmed;
+
+        if (!existingKeys.has(key)) {
           rowsToAppend.push([
             projectForItem,
             gclid,
@@ -289,9 +310,14 @@ function appendAdjustmentRowsBatch(rows) {
             ADJUSTED_VALUE_CURRENCY,
             uploadV
           ]);
+
           existingKeys.add(key);
-        });
-      }
+        } else if (DEBUG) {
+          Logger.log(
+            'appendAdjustmentRowsBatch: skipping existing key %s',
+            key
+          );
+        }
 
 
       // primary
