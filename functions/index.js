@@ -357,8 +357,8 @@ for (const event of messageEvents) {
     // Preserve old phone-based identity when a phone exists.
     // Fall back to BSUID for privacy/username users.
     const senderId =
-      whatsappPhone ||
       whatsappBsuid ||
+      whatsappPhone ||
       rawFrom ||
       null;
 
@@ -371,37 +371,99 @@ for (const event of messageEvents) {
           }
 
           // <--- 2. ORGANIZED FIRESTORE BACKUP (The Smart Way) --->
-            if (msgId && from !== 'unknown') {
-              // Firestore document IDs cannot contain "/".
-              const conversationId = String(from).replace(/\//g, '_');
+            // <--- 2. RESOLVE PROJECT + ORGANIZED FIRESTORE BACKUP --->
 
-              const userDocRef =
-                db.collection('whatsapp_conversations').doc(conversationId);
+          const conversationId =
+            from !== 'unknown'
+              ? String(from).replace(/\//g, '_')
+              : null;
 
-              const messagesCollection =
-                userDocRef.collection('messages');
+          // Extract token from this message, if present
+          const m = text.match(/#([A-Z0-9]{4,12})/i);
+          const rawToken = m ? m[1] : null;
+          const token = rawToken ? normalizeToken(rawToken) : null;
 
-              const batch = db.batch();
+          let projectIdFound = null;
+          let indexSnap = null;
 
-              batch.set(userDocRef, {
+          // A. First choice: determine project from this message's token
+          if (token) {
+            const indexRef = db.doc(`tokenIndex/${token}`);
+            indexSnap = await indexRef.get();
+
+            if (indexSnap.exists) {
+              const indexData = indexSnap.data();
+              projectIdFound = indexData.projectId || null;
+
+              // Remember which project this WhatsApp sender belongs to
+              if (projectIdFound && conversationId) {
+                await db.doc(`whatsappSenderIndex/${conversationId}`).set(
+                  {
+                    projectId: projectIdFound,
+                    whatsapp_sender_id: from,
+                    updated_at:
+                      admin.firestore.FieldValue.serverTimestamp()
+                  },
+                  { merge: true }
+                );
+              }
+            }
+          }
+
+          // B. No token? Recover the project from the sender index
+          if (!projectIdFound && conversationId) {
+            const senderIndexSnap =
+              await db.doc(`whatsappSenderIndex/${conversationId}`).get();
+
+            if (senderIndexSnap.exists) {
+              projectIdFound =
+                senderIndexSnap.data().projectId || null;
+            }
+          }
+
+          // C. Save conversation only when we know its project
+          if (
+            projectIdFound &&
+            msgId &&
+            conversationId
+          ) {
+            const userDocRef = db.doc(
+              `projects/${projectIdFound}/whatsapp_conversations/${conversationId}`
+            );
+
+            const messagesCollection =
+              userDocRef.collection('messages');
+
+            const batch = db.batch();
+
+            batch.set(
+              userDocRef,
+              {
+                projectId: projectIdFound,
+
                 last_active:
                   admin.firestore.FieldValue.serverTimestamp(),
 
                 last_message_preview:
                   text.substring(0, 50),
 
-                // Stable identity information
                 whatsapp_sender_id: from,
                 phone_number: whatsappPhone,
                 whatsapp_bsuid: whatsappBsuid,
                 whatsapp_username: whatsappUsername,
                 whatsapp_profile_name: whatsappProfileName
-              }, { merge: true });
+              },
+              { merge: true }
+            );
 
-              const messageDocRef =
-                messagesCollection.doc(msgId);
+            const messageDocRef =
+              messagesCollection.doc(msgId);
 
-              batch.set(messageDocRef, {
+            batch.set(
+              messageDocRef,
+              {
+                projectId: projectIdFound,
+
                 from: from,
 
                 whatsapp_sender_id: from,
@@ -419,44 +481,49 @@ for (const event of messageEvents) {
                   admin.firestore.FieldValue.serverTimestamp(),
 
                 raw_payload: msg,
-
                 contact_payload: contact || null
-              }, { merge: true });
+              },
+              { merge: true }
+            );
 
-              await batch.commit();
-            }
-
-          // <--- 3. YOUR EXISTING TOKEN LOGIC (Keep this exactly as is) --->
-          const m = text.match(/#([A-Z0-9]{4,12})/i);
-          const rawToken = m ? m[1] : null;
-          const token = rawToken ? normalizeToken(rawToken) : null;
-
-          if (!token) {
-            // Only log if it's NOT media/status update to reduce noise
-            if(type === 'text') console.log('no token in message, skipping logic');
-            continue; 
+            await batch.commit();
           }
 
-          const indexRef = db.doc(`tokenIndex/${token}`);
-          const indexSnap = await indexRef.get();
-          if (!indexSnap.exists) continue;
-          
-          const indexData = indexSnap.data();
-          const projectIdFound = indexData.projectId;
-          if (!projectIdFound) continue;
+          // <--- 3. EXISTING TOKEN / CONVERSION LOGIC --->
 
-          const clickRef = db.doc(`projects/${projectIdFound}/clicks/${token}`);
-          
+          // Messages without a tracking token can still be backed up above,
+          // but they must not trigger a conversion.
+          if (!token) {
+            if (type === 'text') {
+              console.log(
+                'no token in message; conversation saved if sender project was known'
+              );
+            }
+            continue;
+          }
+
+          // Token existed but was not found in tokenIndex
+          if (!indexSnap || !indexSnap.exists) {
+            continue;
+          }
+
+          if (!projectIdFound) {
+            continue;
+          }
+
+          const clickRef =
+            db.doc(`projects/${projectIdFound}/clicks/${token}`);
+
           await clickRef.update({
             used: true,
+
             used_at:
               admin.firestore.FieldValue.serverTimestamp(),
 
-            // Backwards-compatible field:
-            // phone when available, BSUID otherwise.
+            // Stable WhatsApp identity.
+            // BSUID is preferred when Meta supplies one.
             whatsapp_from: from,
 
-            // Explicit modern identity fields:
             whatsapp_phone: whatsappPhone,
             whatsapp_bsuid: whatsappBsuid,
             whatsapp_username: whatsappUsername,
@@ -465,6 +532,13 @@ for (const event of messageEvents) {
             whatsapp_msg_id: msgId,
             conversion_value_source: 'whatsapp_message'
           });
+
+          console.log(
+            'Token logic executed for',
+            token,
+            'project',
+            projectIdFound
+          );
           
           console.log('Token logic executed for', token);
 
