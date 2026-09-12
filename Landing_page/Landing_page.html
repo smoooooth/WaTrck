@@ -5,7 +5,6 @@
   rel="noopener noreferrer"
   aria-label="Chat with us on WhatsApp"
   data-wa-phone="+201034285454"
-  data-wa-message="Hello, I would like to know more about Aida Muscat."
   data-wa-cta-id="floating_whatsapp_widget"
 >
   <span class="wa-widget__ring">
@@ -45,32 +44,34 @@
   </svg>
 </button>
 
-
-
+<script>
 (function () {
 
   /* =========================================================
-     EXISTING WHATSAPP CONFIG
+     PROJECT CONFIG — CHANGE THESE FOR EVERY NEW PROJECT
      ========================================================= */
-
-  var DEFAULT_PHONE = "+201034285454";
 
   var DEFAULT_MESSAGE =
     "Hello, I would like to know more about Aida Muscat.";
-
-
-  /* =========================================================
-     WATRCK STAGING CONFIG
-     ========================================================= */
-
-  var SAVE_TOKEN_ENDPOINT =
-    "https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/saveToken";
 
   var PROJECT_ID = "AIDA_Oman";
 
   var WHATSAPP_CONVERSION_NAME = "Aida-ws-contact";
 
   var LEAD_VALUE_ESTIMATE = 70;
+
+  var LEGACY_GOOGLE_ADS_SEND_TO =
+    "AW-18357797105/LSmZCNTfp98cEPGB17FE";
+
+
+  /* =========================================================
+     GLOBAL / SYSTEM CONFIG — NORMALLY DO NOT CHANGE
+     ========================================================= */
+
+  var DEFAULT_PHONE = "+201034285454";
+
+  var SAVE_TOKEN_ENDPOINT =
+    "https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/saveToken";
 
   var ATTRIBUTION_TTL_HOURS = 24;
 
@@ -456,6 +457,10 @@
       DEFAULT_PHONE;
 
 
+    /*
+     * One project-wide default message.
+     * A CTA may still optionally override it with data-wa-message.
+     */
     var message =
       cta.getAttribute("data-wa-message") ||
       DEFAULT_MESSAGE;
@@ -564,7 +569,7 @@
       gtag("event", "conversion", {
 
         "send_to":
-          "AW-18357797105/LSmZCNTfp98cEPGB17FE"
+          LEGACY_GOOGLE_ADS_SEND_TO
 
       });
 
@@ -583,3 +588,4 @@
   });
 
 })();
+</script>
