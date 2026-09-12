@@ -442,7 +442,45 @@ function installProjectConfigFromEditor() {
 
 
 
+// ================ CLOUD SCHEDULER WEB APP =================
 
+function jsonResponse(object) {
+  return ContentService
+    .createTextOutput(JSON.stringify(object))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function runAdjustmentsFromScheduler() {
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    throw new Error(
+      'Could not acquire adjustments exporter lock within 30 seconds. Another export is probably running.'
+    );
+  }
+
+  try {
+    runOnceFetchAdjustments();
+
+    return {
+      ok: true
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function doGet(e) {
+  return jsonResponse(
+    runAdjustmentsFromScheduler()
+  );
+}
+
+function doPost(e) {
+  return jsonResponse(
+    runAdjustmentsFromScheduler()
+  );
+}
 
 
 
