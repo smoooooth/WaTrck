@@ -320,12 +320,6 @@ function appendAdjustmentRowsBatch(rows) {
         }
 
 
-      // primary
-      pushRowForConv(convPrimary);
-      // sales conversion if present and different
-      if (convSales && convSales !== convPrimary) pushRowForConv(convSales);
-
-
       if (item.order_id) {
         appendedItems.push({
           order_id: String(item.order_id).trim(),
