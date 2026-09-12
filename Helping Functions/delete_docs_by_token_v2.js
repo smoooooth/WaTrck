@@ -1,15 +1,9 @@
-const { initializeApp, applicationDefault } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
+const admin = require('firebase-admin');
 const fs = require('fs');
 const readline = require('readline');
-
-// Uses the Application Default Credentials created by:
-// gcloud auth application-default login
-initializeApp({
-  credential: applicationDefault()
-});
-
-const db = getFirestore();
+// Uses Application Default Credentials when run locally.
+admin.apps.length || admin.initializeApp();
+const db = admin.firestore();
 const BATCH_SIZE = 400;
 
 
@@ -20,9 +14,9 @@ const BATCH_SIZE = 400;
 
 // Add the tokens you want to delete here
 const TOKENS_TO_DELETE = [
-  "0Q90TVS",
-  "0YN84FZ",
-  "4DVKAA7"
+  "TOKEN1",
+  "TOKEN2",
+  "TOKEN3"
 ];
 
 // false = delete only WhatsApp message(s) linked to the token.
