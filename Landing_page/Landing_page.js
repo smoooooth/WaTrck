@@ -1,350 +1,585 @@
-<script>
-const SAVE_TOKEN_ENDPOINT = 'https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/saveToken';
-const WHATSAPP_PHONE = '971585927034';
-const LEAD_FORM_CONVERSION_NAME = 'DVT_SLF_Offline';
-const WHATSAPP_CONVERSION_NAME = 'DVT_WA_Contact';
-const PROJECT_ID = 'DVT_Pagani';
+<a
+  class="wa-widget custom_action_cta"
+  href="#"
+  target="_blank"
+  rel="noopener noreferrer"
+  aria-label="Chat with us on WhatsApp"
+  data-wa-phone="+201034285454"
+  data-wa-message="Hello, I would like to know more about Aida Muscat."
+  data-wa-cta-id="floating_whatsapp_widget"
+>
+  <span class="wa-widget__ring">
+    <img
+      class="wa-widget__photo"
+      src="https://imagedelivery.net/U5iR5oiP6vsJdJpLjvlF7g/18345584-9a8d-4743-afef-36c54c6ed900/ProjectDetails2nd"
+      alt="Property advisor available on WhatsApp"
+      loading="lazy"
+    />
+  </span>
+
+  <span class="wa-widget__badge" aria-hidden="true">
+    <svg
+      class="wa-widget__badge-icon"
+      viewBox="0 0 32 32"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        fill="#ffffff"
+        d="M16.001 3.2C8.93 3.2 3.2 8.93 3.2 16c0 2.26.6 4.47 1.73 6.42L3.2 28.8l6.53-1.71A12.74 12.74 0 0 0 16 28.8C23.07 28.8 28.8 23.07 28.8 16S23.07 3.2 16.001 3.2zm0 23.2c-1.98 0-3.92-.53-5.62-1.53l-.4-.24-3.87 1.01 1.03-3.77-.26-.42A10.55 10.55 0 0 1 5.4 16c0-5.85 4.76-10.6 10.6-10.6 2.83 0 5.5 1.1 7.5 3.11a10.53 10.53 0 0 1 3.1 7.49c0 5.85-4.76 10.6-10.6 10.6zm5.82-7.94c-.32-.16-1.89-.93-2.18-1.04-.29-.11-.5-.16-.71.16-.21.32-.82 1.04-1 1.25-.18.21-.37.24-.69.08-.32-.16-1.35-.5-2.57-1.58-.95-.85-1.59-1.9-1.78-2.22-.18-.32-.02-.49.14-.65.14-.14.32-.37.48-.56.16-.19.21-.32.32-.53.11-.21.05-.4-.03-.56-.08-.16-.71-1.71-.97-2.34-.26-.62-.52-.54-.71-.54-.18-.01-.4-.01-.61-.01-.21 0-.56.08-.85.4-.29.32-1.11 1.09-1.11 2.64 0 1.56 1.14 3.06 1.3 3.27.16.21 2.24 3.42 5.43 4.8.76.33 1.35.52 1.81.67.76.24 1.45.21 2 .13.61-.09 1.89-.77 2.16-1.52.27-.75.27-1.38.19-1.52-.08-.14-.29-.21-.61-.37z"
+      />
+    </svg>
+  </span>
+
+  <span class="wa-widget__dot" aria-hidden="true"></span>
+</a>
+
+<button
+  class="lead-fab"
+  type="button"
+  data-lead-open
+  aria-label="Request project details by email"
+>
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="2.5" y="5" width="19" height="14" rx="1.5"></rect>
+    <path d="M3 6.5l9 6.5 9-6.5"></path>
+  </svg>
+</button>
 
 
-const WA_FORM_TOKEN_KEY = 'wa_form_token';
-const WA_FORM_TOKEN_TTL_HOURS = 24;
 
-function generateToken(len = 7) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let out = '';
-  const arr = crypto.getRandomValues(new Uint8Array(len));
-  for (let i = 0; i < len; i++) out += chars[arr[i] % chars.length];
-  return out;
-}
+(function () {
 
-function getGclid(ttlHours = 24) {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const urlGclid = params.get('gclid');
-    if (urlGclid) {
-      const payload = { gclid: urlGclid, ts: Date.now() };
-      try { localStorage.setItem('wa_gclid', JSON.stringify(payload)); } catch {}
-      return urlGclid;
+  /* =========================================================
+     EXISTING WHATSAPP CONFIG
+     ========================================================= */
+
+  var DEFAULT_PHONE = "+201034285454";
+
+  var DEFAULT_MESSAGE =
+    "Hello, I would like to know more about Aida Muscat.";
+
+
+  /* =========================================================
+     WATRCK STAGING CONFIG
+     ========================================================= */
+
+  var SAVE_TOKEN_ENDPOINT =
+    "https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/saveToken";
+
+  var PROJECT_ID = "AIDA_Oman";
+
+  var WHATSAPP_CONVERSION_NAME = "Aida-ws-contact";
+
+  var LEAD_VALUE_ESTIMATE = 70;
+
+  var ATTRIBUTION_TTL_HOURS = 24;
+
+  // Keep this true while staging.
+  var WATRCK_DEBUG = true;
+
+
+  /* =========================================================
+     TOKEN
+     ========================================================= */
+
+  function generateToken(len) {
+
+    len = len || 7;
+
+    var chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+    var output = "";
+
+    var randomValues =
+      crypto.getRandomValues(new Uint8Array(len));
+
+    for (var i = 0; i < len; i++) {
+      output +=
+        chars[randomValues[i] % chars.length];
     }
-    const raw = localStorage.getItem('wa_gclid');
-    if (!raw) return '';
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch (e) { try { localStorage.removeItem('wa_gclid'); } catch {} return ''; }
-    if (!parsed.gclid || !parsed.ts) { try { localStorage.removeItem('wa_gclid'); } catch {} return ''; }
-    const ageMs = Date.now() - parsed.ts;
-    const ttlMs = ttlHours * 3600 * 1000;
-    if (ageMs <= ttlMs) return parsed.gclid;
-    try { localStorage.removeItem('wa_gclid'); } catch {}
-    return '';
-  } catch (e) {
-    return '';
+
+    return output;
   }
-}
 
 
-function getCampaignId(ttlHours = 24) {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const urlCid = params.get('campaign_id');
-    if (urlCid) {
-      const payload = { cid: urlCid, ts: Date.now() };
-      try { localStorage.setItem('wa_campaign_id', JSON.stringify(payload)); } catch {}
-      return urlCid;
+  /* =========================================================
+     GCLID
+     ========================================================= */
+
+  function getGclid(ttlHours) {
+
+    try {
+
+      var params =
+        new URLSearchParams(window.location.search);
+
+      var urlGclid =
+        params.get("gclid");
+
+
+      /*
+       * If a GCLID exists in the URL,
+       * store it for later use.
+       */
+      if (urlGclid) {
+
+        try {
+          localStorage.setItem(
+            "wa_gclid",
+            JSON.stringify({
+              gclid: urlGclid,
+              ts: Date.now()
+            })
+          );
+        } catch (e) {}
+
+        return urlGclid;
+      }
+
+
+      /*
+       * Otherwise check localStorage.
+       */
+      var raw =
+        localStorage.getItem("wa_gclid");
+
+      if (!raw) {
+        return "";
+      }
+
+
+      var parsed;
+
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+
+        try {
+          localStorage.removeItem("wa_gclid");
+        } catch (_) {}
+
+        return "";
+      }
+
+
+      if (!parsed.gclid || !parsed.ts) {
+
+        try {
+          localStorage.removeItem("wa_gclid");
+        } catch (_) {}
+
+        return "";
+      }
+
+
+      var ageMs =
+        Date.now() - parsed.ts;
+
+      var ttlMs =
+        ttlHours * 60 * 60 * 1000;
+
+
+      if (ageMs <= ttlMs) {
+        return parsed.gclid;
+      }
+
+
+      try {
+        localStorage.removeItem("wa_gclid");
+      } catch (_) {}
+
+
+      return "";
+
+    } catch (e) {
+
+      return "";
+
     }
-
-    const raw = localStorage.getItem('wa_campaign_id');
-    if (!raw) return '';
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch (e) {
-      try { localStorage.removeItem('wa_campaign_id'); } catch {}
-      return '';
-    }
-    if (!parsed.cid || !parsed.ts) {
-      try { localStorage.removeItem('wa_campaign_id'); } catch {}
-      return '';
-    }
-
-    const ageMs = Date.now() - parsed.ts;
-    const ttlMs = ttlHours * 3600 * 1000;
-    if (ageMs <= ttlMs) return parsed.cid;
-
-    try { localStorage.removeItem('wa_campaign_id'); } catch {}
-    return '';
-  } catch (e) {
-    return '';
   }
-}
 
-function getCanonicalPage() {
-  try {
-    const loc = window.location;
-    let host = loc.hostname.toLowerCase();
-    if (host.startsWith('www.')) host = host.substring(4);
-    let path = loc.pathname;
-    if (!path) path = '/';
-    if (path !== '/' && path.endsWith('/')) path = path.slice(0, -1);
-    return (host + path).toLowerCase();
-  } catch (e) {
-    return '';
-  }
-}
 
-function trySendBeacon(obj) {
-  try {
-    if (navigator.sendBeacon) {
-      const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
-      return navigator.sendBeacon(SAVE_TOKEN_ENDPOINT, blob);
+  /* =========================================================
+     GOOGLE CAMPAIGN ID
+     ========================================================= */
+
+  function getCampaignId(ttlHours) {
+
+    try {
+
+      var params =
+        new URLSearchParams(window.location.search);
+
+      var urlCampaignId =
+        params.get("campaign_id");
+
+
+      if (urlCampaignId) {
+
+        try {
+          localStorage.setItem(
+            "wa_campaign_id",
+            JSON.stringify({
+              cid: urlCampaignId,
+              ts: Date.now()
+            })
+          );
+        } catch (e) {}
+
+        return urlCampaignId;
+      }
+
+
+      var raw =
+        localStorage.getItem(
+          "wa_campaign_id"
+        );
+
+      if (!raw) {
+        return "";
+      }
+
+
+      var parsed;
+
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+
+        try {
+          localStorage.removeItem(
+            "wa_campaign_id"
+          );
+        } catch (_) {}
+
+        return "";
+      }
+
+
+      if (!parsed.cid || !parsed.ts) {
+
+        try {
+          localStorage.removeItem(
+            "wa_campaign_id"
+          );
+        } catch (_) {}
+
+        return "";
+      }
+
+
+      var ageMs =
+        Date.now() - parsed.ts;
+
+      var ttlMs =
+        ttlHours * 60 * 60 * 1000;
+
+
+      if (ageMs <= ttlMs) {
+        return parsed.cid;
+      }
+
+
+      try {
+        localStorage.removeItem(
+          "wa_campaign_id"
+        );
+      } catch (_) {}
+
+
+      return "";
+
+    } catch (e) {
+
+      return "";
+
     }
-  } catch (e) {}
-  return false;
-}
+  }
 
-async function fetchSend(obj) {
-  try {
-    await fetch(SAVE_TOKEN_ENDPOINT, {
-      method: 'POST',
-      mode: 'cors',
-      credentials: 'omit',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(obj),
+
+  /* =========================================================
+     PAGE
+     ========================================================= */
+
+  function getCanonicalPage() {
+
+    try {
+
+      var host =
+        window.location.hostname.toLowerCase();
+
+      if (host.indexOf("www.") === 0) {
+        host = host.substring(4);
+      }
+
+
+      var path =
+        window.location.pathname || "/";
+
+
+      if (
+        path !== "/" &&
+        path.charAt(path.length - 1) === "/"
+      ) {
+        path =
+          path.substring(0, path.length - 1);
+      }
+
+
+      return (
+        host + path
+      ).toLowerCase();
+
+    } catch (e) {
+
+      return "";
+
+    }
+  }
+
+
+  /* =========================================================
+     SAVE WATRCK CLICK
+     ========================================================= */
+
+  function saveWaTrckClick(payload) {
+
+    /*
+     * IMPORTANT:
+     *
+     * We deliberately DO NOT await this request before
+     * opening WhatsApp.
+     *
+     * Your existing WhatsApp behavior therefore remains fast,
+     * and browser popup blocking is not introduced.
+     */
+
+    fetch(SAVE_TOKEN_ENDPOINT, {
+
+      method: "POST",
+
+      mode: "cors",
+
+      credentials: "omit",
+
+      headers: {
+        "Content-Type": "application/json"
+      },
+
+      body: JSON.stringify(payload),
+
       keepalive: true
+
+    })
+    .then(function (response) {
+
+      if (WATRCK_DEBUG) {
+
+        console.log(
+          "[WaTrck] saveToken HTTP:",
+          response.status
+        );
+
+      }
+
+      return response.text();
+
+    })
+    .then(function (body) {
+
+      if (WATRCK_DEBUG) {
+
+        console.log(
+          "[WaTrck] saveToken response:",
+          body
+        );
+
+      }
+
+    })
+    .catch(function (error) {
+
+      console.error(
+        "[WaTrck] saveToken failed:",
+        error
+      );
+
     });
-  } catch (err) {}
-}
 
-async function handleWhatsappClick(prefillText, ctaId) {
-  const token = generateToken(7);
-  const gclid = getGclid(24) || '';
-  const campaignId = getCampaignId(24) || '';
-  const ts = new Date().toISOString();
-  const page = getCanonicalPage();
-  const payloadObj = {
-    token,
-    gclid,
-	campaign_id: campaignId,
-    ts,
-    page,
-    projectId: PROJECT_ID,
-    ctaId: ctaId,
-    lead_value_estimate: 70,
-    conversion_name: WHATSAPP_CONVERSION_NAME,
-    used: false
-  };
-  const beaconOk = trySendBeacon(payloadObj);
-  if (!beaconOk) await fetchSend(payloadObj);
-  const fullText = `${prefillText} Ref: #${token}`;
-const waUrl = `https://api.whatsapp.com/send?phone=${WHATSAPP_PHONE}&text=${encodeURIComponent(fullText)}`;
+  }
 
 
-	try {
-	  if (typeof gtag_report_conversion === 'function') {
-		try { gtag_report_conversion(); } catch (e) {}
-	  }
-	} catch (e) {}
+  /* =========================================================
+     CAPTURE ATTRIBUTION AS SOON AS PAGE LOADS
+     ========================================================= */
+
+  /*
+   * This means that if the visitor arrives with:
+   *
+   * ?gclid=...
+   * ?campaign_id=...
+   *
+   * the values are stored immediately instead of waiting
+   * until the WhatsApp button is clicked.
+   */
+
+  getGclid(ATTRIBUTION_TTL_HOURS);
+
+  getCampaignId(ATTRIBUTION_TTL_HOURS);
 
 
-	const newWin = window.open(waUrl, '_blank');
-	if (!newWin || newWin.closed || typeof newWin.closed === 'undefined') {
-	  setTimeout(() => { window.location.assign(waUrl); }, 150);
-	}
+  /* =========================================================
+     EXISTING WHATSAPP CLICK HANDLER + WATRCK
+     ========================================================= */
+
+  document.addEventListener("click", function (e) {
+
+    var cta =
+      e.target.closest(".custom_action_cta");
 
 
-}
+    if (!cta) {
+      return;
+    }
 
-async function handleFormSuccessElement(el) {
-  try {
-    if (el.hasAttribute('data-conversion-tracked')) return;
-    el.setAttribute('data-conversion-tracked', 'true');
-	
-	const tokenFromInput = (el && el.closest && el.closest('form') && el.closest('form').querySelector('input[name="token"]')) ?
-						   el.closest('form').querySelector('input[name="token"]').value :
-						   null;
-	const token = tokenFromInput || getStoredToken() || generateToken(7);
-	storeToken(token);
-    const gclid = getGclid(24) || '';
-    const ts = new Date().toISOString();
-	const campaignId = getCampaignId(24) || '';
-    const page = getCanonicalPage();
-    const payloadObj = {
-      token,
-      gclid,
-	  campaign_id: campaignId,
-      ts,
-      page,
+
+    e.preventDefault();
+
+
+    /* ---------------------------------------------------------
+       EXISTING CTA DATA
+       --------------------------------------------------------- */
+
+    var rawPhone =
+      cta.getAttribute("data-wa-phone") ||
+      DEFAULT_PHONE;
+
+
+    var message =
+      cta.getAttribute("data-wa-message") ||
+      DEFAULT_MESSAGE;
+
+
+    if (!rawPhone) {
+      return;
+    }
+
+
+    var phone =
+      rawPhone.replace(/[^0-9]/g, "");
+
+
+    /* ---------------------------------------------------------
+       NEW WATRCK DATA
+       --------------------------------------------------------- */
+
+    var token =
+      generateToken(7);
+
+
+    var gclid =
+      getGclid(ATTRIBUTION_TTL_HOURS) || "";
+
+
+    var campaignId =
+      getCampaignId(ATTRIBUTION_TTL_HOURS) || "";
+
+
+    var ctaId =
+      cta.getAttribute("data-wa-cta-id") ||
+      cta.id ||
+      "custom_action_cta";
+
+
+    var payload = {
+
+      token: token,
+
+      gclid: gclid,
+
+      campaign_id: campaignId,
+
+      ts: new Date().toISOString(),
+
+      page: getCanonicalPage(),
+
       projectId: PROJECT_ID,
-      ctaId: 'lead_form',
-      lead_value_estimate: 70,
-      conversion_name: LEAD_FORM_CONVERSION_NAME,
-      used: true
+
+      ctaId: ctaId,
+
+      lead_value_estimate:
+        LEAD_VALUE_ESTIMATE,
+
+      conversion_name:
+        WHATSAPP_CONVERSION_NAME,
+
+      used: false
+
     };
-    let beaconOk = false;
-    try { beaconOk = trySendBeacon(payloadObj); } catch (e) { beaconOk = false; }
-    if (beaconOk) {
-      fetchSend(payloadObj);
-    } else {
-      try { await fetchSend(payloadObj); } catch (e) {}
+
+
+    if (WATRCK_DEBUG) {
+
+      console.log(
+        "[WaTrck] outbound click payload:",
+        payload
+      );
+
     }
-    try {
-      if (typeof gtag_report_conversion === 'function') {
-        try { gtag_report_conversion(); } catch (e) {}
-      }
-    } catch (e) {}
-  } catch (e) {}
-}
-
-function installFormSuccessObserver() {
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((m) => {
-      if (m.type === 'attributes' && m.attributeName === 'style') {
-        const target = m.target;
-        if (target.classList && target.classList.contains('success-message') && target.classList.contains('w-form-done')) {
-          try { handleFormSuccessElement(target); } catch (e) {}
-        }
-      }
-      if (m.type === 'childList' && m.addedNodes && m.addedNodes.length) {
-        m.addedNodes.forEach(node => {
-          if (node.nodeType === 1 && node.classList && node.classList.contains('success-message') && node.classList.contains('w-form-done')) {
-            try { handleFormSuccessElement(node); } catch (e) {}
-          }
-        });
-      }
-    });
-  });
-
-  const existing = document.querySelectorAll('.success-message.w-form-done');
-  existing.forEach(el => {
-    try {
-      observer.observe(el, { attributes: true, attributeFilter: ['style'] });
-      if (window.getComputedStyle(el).display === 'block') handleFormSuccessElement(el);
-    } catch (e) {}
-  });
-
-  try { observer.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
-}
 
 
+    /*
+     * Send WaTrck record to Firebase.
+     *
+     * Fire-and-forget so WhatsApp opening remains immediate.
+     */
+    saveWaTrckClick(payload);
 
 
-function getStoredToken() {
-  try {
-    const raw = localStorage.getItem(WA_FORM_TOKEN_KEY);
-    if (!raw) return null;
-    const obj = JSON.parse(raw);
-    if (!obj || !obj.token || !obj.ts) return null;
-    const ageMs = Date.now() - obj.ts;
-    if (ageMs > WA_FORM_TOKEN_TTL_HOURS * 3600 * 1000) {
-      localStorage.removeItem(WA_FORM_TOKEN_KEY);
-      return null;
-    }
-    return obj.token;
-  } catch (e) {
-    try { localStorage.removeItem(WA_FORM_TOKEN_KEY); } catch (__) {}
-    return null;
-  }
-}
+    /* ---------------------------------------------------------
+       ADD TOKEN TO WHATSAPP MESSAGE
+       --------------------------------------------------------- */
 
-function storeToken(token) {
-  try {
-    localStorage.setItem(WA_FORM_TOKEN_KEY, JSON.stringify({ token: token, ts: Date.now() }));
-  } catch (e) {}
-}
+    var messageWithToken =
+      message ?
+        message + " Ref: #" + token :
+        "Ref: #" + token;
 
 
-function ensureTokenExists() {
-  let token = getStoredToken();
-  if (!token) {
-    token = generateToken(7); 
-    storeToken(token);
-  }
-  return token;
-}
+    var url =
+      "https://api.whatsapp.com/send?phone=" +
+      phone +
+      "&text=" +
+      encodeURIComponent(messageWithToken);
 
 
-function ensureTokenFieldOnForm(formEl) {
-  if (!formEl || formEl.nodeType !== 1) return;
-  let input = formEl.querySelector('input[name="token"]');
-  const token = ensureTokenExists();
-  if (!input) {
-    input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'token';
-    input.className = 'wa-token-field';
-    input.value = token;
-    formEl.appendChild(input);
-  } else {
-    input.value = token;
-  }
-}
+    /* ---------------------------------------------------------
+       EXISTING GOOGLE ADS TRACKING
+       DO NOT REMOVE / CHANGE DURING TESTING
+       --------------------------------------------------------- */
 
+    if (typeof gtag === "function") {
 
-function initWaFormToken() {
-  const forms = Array.from(document.forms || document.querySelectorAll('form'));
-  const token = ensureTokenExists();
-  forms.forEach(form => {
-    ensureTokenFieldOnForm(form);
+      gtag("event", "conversion", {
 
-    form.addEventListener('submit', function () {
-      try { ensureTokenFieldOnForm(form); } catch (e) {}
-    }, true);
-  });
+        "send_to":
+          "AW-18357797105/LSmZCNTfp98cEPGB17FE"
 
-  const mo = new MutationObserver(muts => {
-    muts.forEach(m => {
-      m.addedNodes && m.addedNodes.forEach(node => {
-        if (node.nodeType === 1) {
-          if (node.tagName === 'FORM') ensureTokenFieldOnForm(node);
-          node.querySelectorAll && node.querySelectorAll('form').forEach(f => ensureTokenFieldOnForm(f));
-        }
       });
-    });
-  });
-  try { mo.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
-}
 
-// call on DOM ready
-document.addEventListener('DOMContentLoaded', function() {
-  initWaFormToken();
-  installFormSuccessObserver();
-});
+    }
 
 
+    /* ---------------------------------------------------------
+       EXISTING WHATSAPP OPEN
+       --------------------------------------------------------- */
 
-
-document.getElementById('hero_sec_cta')?.addEventListener('click', function (e) {
-  e.preventDefault();
-  handleWhatsappClick("Hello, I would like to book a private tour of DaVinci Tower by Pagani.", "hero_sec_cta");
-});
-
-document.getElementById('sticky_bottom_bar_CTA')?.addEventListener('click', function (e) {
-  e.preventDefault();
-  handleWhatsappClick("Hello, I would like to know more about DaVinci Tower by Pagani.", "sticky_bottom_bar_CTA");
-});
-
-document.querySelectorAll('#intro_slider_brochure_cta').forEach(btn => {
-  btn.addEventListener('click', function (e) {
-    e.preventDefault();
-    handleWhatsappClick(
-      "Hello, I would like to request DaVinci Tower by Pagani brochure.",
-      "intro_slider_brochure_cta"
+    window.open(
+      url,
+      "_blank"
     );
+
   });
-});
 
-
-document.getElementById('navbar_wa_icon')?.addEventListener('click', function (e) {
-  e.preventDefault();
-  handleWhatsappClick("Hello, I would like to know more about DaVinci Tower by Pagani.", "navbar_wa_icon");
-});
-
-document.querySelectorAll('#request_layouts_cta').forEach(btn => {
-  btn.addEventListener('click', function (e) {
-    e.preventDefault();
-    handleWhatsappClick(
-      "Hello, I would like to request the price list for DaVinci Tower by Pagani.",
-      "request_layouts_cta"
-    );
-  });
-});
-
-
-</script>
+})();
