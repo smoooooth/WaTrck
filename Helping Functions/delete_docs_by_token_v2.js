@@ -1,9 +1,15 @@
-const admin = require('firebase-admin');
+const { initializeApp, applicationDefault } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
 const fs = require('fs');
 const readline = require('readline');
-// Uses Application Default Credentials when run locally.
-admin.apps.length || admin.initializeApp();
-const db = admin.firestore();
+
+// Uses the Application Default Credentials created by:
+// gcloud auth application-default login
+initializeApp({
+  credential: applicationDefault()
+});
+
+const db = getFirestore();
 const BATCH_SIZE = 400;
 
 
@@ -14,17 +20,11 @@ const BATCH_SIZE = 400;
 
 // Add the tokens you want to delete here
 const TOKENS_TO_DELETE = [
-  "TOKEN1",
-  "TOKEN2",
-  "TOKEN3"
+  "0Q90TVS",
+  "0YN84FZ",
+  "4DVKAA7"
 ];
 
-// false = delete only WhatsApp message(s) linked to the token.
-//         Preserve the rest of the sender's conversation.
-//
-// true  = delete the sender's ENTIRE WhatsApp conversation,
-//         including other messages in that conversation.
-const DELETE_FULL_WHATSAPP_CHAT = false;
 
 // false = ACTUALLY DELETE.
 // true  = preview only; nothing gets deleted.
@@ -294,10 +294,13 @@ async function deleteOneToken(token, options) {
     }
     // WhatsApp cleanup happens BEFORE deleting click docs because click docs hold
     // whatsapp_from / whatsapp_msg_id, which are needed to locate the chat.
-    for (const clickSnap of resolved.clickDocs) {
-        console.log(` Click: ${clickSnap.ref.path}`);
-        await cleanupWhatsappForClick(clickSnap, token, options);
-    }
+// Log the click documents being deleted.
+// WhatsApp conversations/messages are intentionally preserved.
+            for (const clickSnap of resolved.clickDocs) {
+            console.log(`   Click: ${clickSnap.ref.path}`);
+            }
+
+console.log('   WhatsApp conversations/messages: PRESERVED');
     const clickRefs = resolved.clickDocs.map(snap => snap.ref);
     if (clickRefs.length) {
         console.log(` Delete click doc(s): ${clickRefs.length}`);
@@ -325,11 +328,10 @@ function readTokensFromArgs() {
   return {
     tokens: [...new Set(tokens)],
 
-    options: {
-      dryRun: DRY_RUN,
-      fullChat: DELETE_FULL_WHATSAPP_CHAT,
-      yes: SKIP_CONFIRMATION
-    }
+        options: {
+        dryRun: DRY_RUN,
+        yes: SKIP_CONFIRMATION
+        }
   };
 }
 
