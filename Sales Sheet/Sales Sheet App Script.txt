@@ -122,16 +122,22 @@ function onEditTrigger(e) {
       return;
     }
 
-      // Block Qualified/Closed -> Unqualified transition
+      // Prevent backward lead-quality transitions
       const prevQualityNorm = normalizeQuality(prevRawQuality);
 
-      if (
-        (prevQualityNorm === 'qualified' ||
-        prevQualityNorm === 'closed') &&
-        quality === 'unqualified'
-      ) {
+      const invalidTransition =
+        (
+          prevQualityNorm === 'qualified' &&
+          quality === 'unqualified'
+        ) ||
+        (
+          prevQualityNorm === 'closed' &&
+          (quality === 'qualified' || quality === 'unqualified')
+        );
+
+      if (invalidTransition) {
         messageCell.setValue(
-          'ERROR. Qualified or Closed leads cannot be changed to Unqualified.'
+          'ERROR. This lead quality cannot be moved backwards.'
         );
 
         try {
