@@ -22,7 +22,7 @@ Managed by gcloud functions deploy
 
 // functions/index.js
 const functions = require('firebase-functions');
-const functionsV1 = require('firebase-functions/v1');
+const { onRequest } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const express = require('express');
@@ -2176,13 +2176,12 @@ ttlMinutes:
   // ================= HTTP ENDPOINT =================
 
     exports.cleanupFirestoreHttp =
-      functionsV1
-        .runWith({
+      onRequest(
+        {
+          region: 'us-central1',
           timeoutSeconds: 540,
-          memory: '256MB'
-        })
-        .https
-        .onRequest(
+          memory: '256MiB'
+        },
         async (
           req,
           res
