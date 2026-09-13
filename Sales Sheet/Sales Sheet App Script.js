@@ -187,6 +187,7 @@ function onEditTrigger(e) {
     try {
       messageCell.setValue('loading...');
       messageCell.setFontColor('black');
+      SpreadsheetApp.flush();
     } catch (_) {}
 
     // Fire the backend call
@@ -225,13 +226,6 @@ function onEditTrigger(e) {
           try {
             messageCell.setFontColor('green');
           } catch (_) {}
-
-          // Clear Value only AFTER Qualified succeeded.
-          if (quality === 'qualified') {
-            try {
-              sheet.getRange(rowNum, COL_VALUE).setValue('');
-            } catch (_) {}
-          }
 
         } else {
       // try to extract friendly error
