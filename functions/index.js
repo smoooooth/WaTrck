@@ -9,13 +9,13 @@ saveToken
 exportsApi
 whatsappWebhook
 cleanupFirestoreHttp
-👉 Managed by firebase deploy
+Managed by firebase deploy
 
 
 
 gcloud-managed function
 exportConversionsToSheet
-👉 Managed by gcloud functions deploy
+Managed by gcloud functions deploy
 
  */
 
@@ -1547,13 +1547,12 @@ every day(24h): 0 0 * *
 
   // ================= CONFIG =================
 
-  const UNUSED_TTL_HOURS = 24;
+const UNUSED_TTL_MINUTES = 5;
 
-  const UNUSED_TTL_MS =
-    UNUSED_TTL_HOURS *
-    60 *
-    60 *
-    1000;
+const UNUSED_TTL_MS =
+  UNUSED_TTL_MINUTES *
+  60 *
+  1000;
 
   /*
    * KEEP TRUE FOR FIRST TEST.
@@ -1561,7 +1560,7 @@ every day(24h): 0 0 * *
    * After we verify the logs are correct,
    * change this to false and redeploy.
    */
-  const CLEANUP_DRY_RUN = true;
+  const CLEANUP_DRY_RUN = false;
 
   /*
    * Number of cleanup transactions allowed to run
@@ -2110,8 +2109,8 @@ every day(24h): 0 0 * *
     const summary = {
       dryRun,
 
-      ttlHours:
-        UNUSED_TTL_HOURS,
+ttlMinutes:
+  UNUSED_TTL_MINUTES,
 
       unusedDocsScanned:
         snapshot.size,
