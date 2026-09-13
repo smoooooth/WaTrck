@@ -22,6 +22,7 @@ Managed by gcloud functions deploy
 
 // functions/index.js
 const functions = require('firebase-functions');
+const functionsV1 = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const express = require('express');
@@ -1859,7 +1860,7 @@ const UNUSED_TTL_MS =
 
     console.log(
       '[CLEANUP] Unused TTL hours:',
-      UNUSED_TTL_HOURS
+      UNUSED_TTL_MINUTES
     );
 
     console.log(
@@ -2174,14 +2175,14 @@ ttlMinutes:
 
   // ================= HTTP ENDPOINT =================
 
-  exports.cleanupFirestoreHttp =
-    functions
-      .runWith({
-        timeoutSeconds: 540,
-        memory: '256MB'
-      })
-      .https
-      .onRequest(
+    exports.cleanupFirestoreHttp =
+      functionsV1
+        .runWith({
+          timeoutSeconds: 540,
+          memory: '256MB'
+        })
+        .https
+        .onRequest(
         async (
           req,
           res
