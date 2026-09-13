@@ -1076,48 +1076,6 @@ app.post(
 
 
 
-/**
- * POST /exports/mark-adjustments-exported?project=<project>&secret=<secret>
- * Body: { items: [ { order_id: '...', upload_version: 3 }, ... ] }
- * Marks last_adjustment_version_exported for each doc.
- */
-app.post('/exports/mark-adjustments-exported', requireSecret, express.json(), async (req, res) => {
-  try {
-    const project = req.query.project;
-    if (!project) return res.status(400).json({ error: 'Missing project' });
-
-    const items = (req.body && Array.isArray(req.body.items)) ? req.body.items : [];
-    if (!items.length) return res.status(400).json({ error: 'No items provided' });
-
-    const basePath = `projects/${project}/clicks`;
-    const batch = db.batch();
-    const updated = [];
-    const errors = [];
-
-    for (const item of items) {
-      const id = item.order_id;
-      const v = (typeof item.upload_version === 'number') ? item.upload_version : null;
-      if (!id || v === null) {
-        errors.push({ id, error: 'Missing order_id or upload_version' });
-        continue;
-      }
-      const docRef = db.doc(`${basePath}/${id}`);
-      batch.update(docRef, {
-        last_adjustment_version_exported: v
-      });
-      updated.push({ id, upload_version: v });
-    }
-
-    await batch.commit();
-    return res.json({ success: true, updated, errors });
-  } catch (err) {
-    console.error('mark-adjustments-exported error', err);
-    return res.status(500).json({ error: String(err) });
-  }
-});
-
-
-
 
 
 
