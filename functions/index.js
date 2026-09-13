@@ -610,10 +610,11 @@ app.get('/exports/pending', requireSecret, async (req, res) => {
     if (project) {
       // per-project query (existing behavior)
       const basePath = `projects/${project}/clicks`;
-      const colRef = db.collection(basePath)
-        .where('used', '==', true)
-        .orderBy('used_at', 'asc')
-        .limit(limit);
+        const colRef = db.collection(basePath)
+          .where('used', '==', true)
+          .where('conversion_value_uploaded', '==', false)
+          .orderBy('used_at', 'asc')
+          .limit(limit);
       snapshot = await colRef.get();
 
       snapshot.forEach(doc => {
@@ -664,11 +665,11 @@ app.get('/exports/pending', requireSecret, async (req, res) => {
     } else {
       // global query across all projects using collectionGroup
       // NOTE: collectionGroup requires proper indexing if you orderBy used_at
-      collectionGroup('clicks')
+      const colRef = db.collectionGroup('clicks')
         .where('used', '==', true)
         .where('conversion_value_uploaded', '==', false)
         .orderBy('used_at', 'asc')
-        .limit(limit)
+        .limit(limit);
 
       snapshot = await colRef.get();
       snapshot.forEach(doc => {
