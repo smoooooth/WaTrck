@@ -664,10 +664,11 @@ app.get('/exports/pending', requireSecret, async (req, res) => {
     } else {
       // global query across all projects using collectionGroup
       // NOTE: collectionGroup requires proper indexing if you orderBy used_at
-      const colRef = db.collectionGroup('clicks')
+      collectionGroup('clicks')
         .where('used', '==', true)
+        .where('conversion_value_uploaded', '==', false)
         .orderBy('used_at', 'asc')
-        .limit(limit);
+        .limit(limit)
 
       snapshot = await colRef.get();
       snapshot.forEach(doc => {
