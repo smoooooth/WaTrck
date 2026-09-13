@@ -1,279 +1,904 @@
 /**
- * TEST CONVERSION SEEDER (Zigzag & Batch Modes)
- * * Usage:
+ * WaTrck - TEST CONVERSION SEEDER
+ * ==========================================
+ *
+ * Two test modes:
+ *
+ * 1. ZIGZAG
+ *    Alternates conversions between EXACTLY two projects.
+ *
+ *    Example:
+ *    Project A
+ *    Project B
+ *    Project A
+ *    Project B
+ *    ...
+ *
+ * 2. BULK
+ *    Creates many conversions inside ONE project only.
+ *
+ *
+ * RUN:
+ *
  * node seed-test-conversions.js
+ *
+ *
+ * IMPORTANT:
+ *
+ * All generated GCLIDs contain:
+ *
+ * _testproduction_
+ *
+ * so the global Conversions exporter should route them into:
+ *
+ * TESTING_Conversions_Sheet
+ *
+ * NOT the normal production conversions sheet.
  */
 
-const admin = require('firebase-admin');
+
+/* =========================================================
+   FIREBASE
+   ========================================================= */
+
+const {
+  initializeApp,
+  applicationDefault
+} = require('firebase-admin/app');
+
+const {
+  getFirestore,
+  Timestamp
+} = require('firebase-admin/firestore');
+
 const crypto = require('crypto');
 
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
 
-const db = admin.firestore();
+initializeApp({
+  credential: applicationDefault(),
+  projectId: 'aida-muscat-wa-tracking'
+});
 
-/* ======================================================================== node seed-test-conversions.js
-   ========================= 1. GENERAL CONFIG ============================
-   ======================================================================== */
+const db = getFirestore();
 
-// The Projects to cycle through
+
+/* =========================================================
+   1. MASTER TEST CONFIG
+   ========================================================= */
+/*
+ * Choose:
+ *
+ * "zigzag"
+ *
+ * OR
+ *
+ * "bulk"
+ */
+
+const TEST_MODE = "zigzag";
+/*
+ * These are the three current WaTrck project IDs.
+ *
+ * Project IDs must match Firestore exactly.
+ */
+
 const PROJECT_IDS = [
-  //'aida',
- // 'DVT_Pagani'
-  'AIDA_Muscat',
-  'DaVinci_Tower'
-  //'project_test1',
-  //'project_test2'
-  //'project_test3',
-  //'project_test4'
+
+  "AIDA_Oman",
+
+  "Trump Plaza Jeddah",
+
+  "Trump Park Residences"
+
 ];
 
-// MASTER TOGGLE: Choose which mode to run
-// true  = New Zigzag mode (Round-robin with timer)
-// false = Old Batch mode (Instant, sequential per project) node seed-test-conversions.js
-const USE_ZIGZAG_MODE = true; 
+/*
+ * IMPORTANT:
+ *
+ * These conversion names are TEST conversion names.
+ *
+ * They do NOT need to exist in Google Ads because
+ * _testproduction_ conversions are isolated into the
+ * TESTING conversions sheet.
+ *
+ * We deliberately make the conversion name unique
+ * for each project so it is easy to see which project
+ * produced each row.
+ */
 
-const TEST_MARKER = '_testproduction_';
+function getTestConversionName(projectId) {
 
+  return projectId + " - TEST Contact";
 
-/* ========================================================================
-   ========================= 2. ZIGZAG CONFIG ============================= node seed-test-conversions.js
-   (Only used if USE_ZIGZAG_MODE = true)
-   ======================================================================== */
-
-// How many STANDARD (GCLID) conversions to create per project
-const ZIGZAG_GCLID_COUNT_PER_PROJECT = 1;
-
-// NO-GCLID Settings
-const ZIGZAG_INCLUDE_NO_GCLID = false;      // Toggle creation of No-GCLID docs
-const ZIGZAG_NO_GCLID_COUNT = 10;           // How many No-GCLID docs per project
-
-// Timer delay between EVERY document creation (in milliseconds)
-const ZIGZAG_DELAY_MS = 1000; 
+}
 
 
-/* ======================================================================== node seed-test-conversions.js
-   ========================= 3. BATCH CONFIG ==============================
-   (Only used if USE_ZIGZAG_MODE = false)
-   ======================================================================== */
-const BATCH_COUNT_PER_PROJECT = 10;
-const BATCH_INCLUDE_EMPTY_GCLID = true;   
-const BATCH_EMPTY_GCLID_COUNT = 5;         
+/*
+ * Marker recognized by the global Conversions exporter.
+ *
+ * DO NOT CHANGE.
+ */
+
+const TEST_MARKER =
+  "_testproduction_";
 
 
-/* ========================================================================
-   =========================== HELPERS ====================================
-   ======================================================================== */
+/*
+ * Conversion value used by generated test leads.
+ */
+
+const LEAD_VALUE_ESTIMATE = 70;
+
+
+/* =========================================================
+   2. ZIGZAG CONFIG
+   ========================================================= */
+
+
+/*
+ * Pick EXACTLY TWO projects from PROJECT_IDS.
+ *
+ * The script will alternate:
+ *
+ * project 1
+ * project 2
+ * project 1
+ * project 2
+ * ...
+ */
+
+const ZIGZAG_PROJECT_IDS = [
+
+  "AIDA_Oman",
+  "Trump Plaza Jeddah",
+  "Trump Park Residences"
+
+];
+
+
+/*
+ * Number of conversions PER PROJECT.
+ *
+ * Example:
+ *
+ * 10 means:
+ *
+ * AIDA = 10
+ * Trump Plaza = 10
+ *
+ * Total = 20
+ */
+
+const ZIGZAG_COUNT_PER_PROJECT = 5;
+
+
+/*
+ * Delay between each created conversion.
+ *
+ * 1000 = 1 second.
+ *
+ * This is useful for challenging the global exporter
+ * while conversions arrive one after another.
+ */
+
+const ZIGZAG_DELAY_MS = 1000;
+
+
+/* =========================================================
+   3. BULK CONFIG
+   ========================================================= */
+
+
+/*
+ * ONE project only.
+ *
+ * Change this when you want to bulk-test another project.
+ */
+
+const BULK_PROJECT_ID =
+  "Trump Park Residences";
+
+
+/*
+ * Total conversions to create in that single project.
+ */
+
+const BULK_COUNT = 100;
+
+
+/*
+ * Firestore allows a limited number of writes per batch.
+ *
+ * Every conversion uses TWO writes:
+ *
+ * 1. projects/<project>/clicks/<token>
+ * 2. tokenIndex/<token>
+ *
+ * 200 conversions = 400 writes.
+ *
+ * Keep this <= 200.
+ */
+
+const BULK_CONVERSIONS_PER_BATCH = 200;
+
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
 
 function randString(len = 7) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let out = '';
-  const arr = crypto.randomBytes(len);
-  for (let i = 0; i < len; i++) out += chars[arr[i] % chars.length];
-  return out;
-}
 
-// Generates a delay promise
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-// Creates a single document in Firestore mimicking REAL conversion structure
-async function createConversionDoc(projectId, isNoGclid) {
-  const now = new Date(); // Javascript Date object
-  const firestoreTimestamp = admin.firestore.Timestamp.now(); // Firestore Timestamp
-  const token = randString(7); // Random 7-char token like "BYQQ4QF"
+  let output = "";
 
-  // -- PAYLOAD CONSTRUCTION --
-  let gclidValue = null;
-  let campaignIdValue = null;
-  let convName = "";
+  const bytes =
+    crypto.randomBytes(len);
 
-  if (isNoGclid) {
-    // Case: No GCLID
-    // Per requirements: gclid is null, campaign_id is marker
-    gclidValue = null;
-    campaignIdValue = TEST_MARKER; 
-    convName = `${projectId}_WA_Contact`; // mimic real naming
-  } else {
-    // Case: Standard GCLID
-    // Per requirements: gclid has marker, campaign_id is null
-    // gclid format: _testproduction_-<random>
-    gclidValue = `${TEST_MARKER}-${randString(20)}`;
-    campaignIdValue = null;
-    convName = `${projectId}_WA_Contact`;
+  for (
+    let i = 0;
+    i < len;
+    i++
+  ) {
+
+    output +=
+      chars[
+        bytes[i] %
+        chars.length
+      ];
+
   }
 
-  const docPath = `projects/${projectId}/clicks/${token}`;
-  
+  return output;
+
+}
+
+
+function sleep(ms) {
+
+  return new Promise(
+    resolve =>
+      setTimeout(resolve, ms)
+  );
+
+}
+
+
+function validateProject(projectId) {
+
+  if (
+    !PROJECT_IDS.includes(projectId)
+  ) {
+
+    throw new Error(
+      "Unknown project ID: " +
+      projectId
+    );
+
+  }
+
+}
+
+
+function createTestData(projectId) {
+
+  validateProject(projectId);
+
+
+  const token =
+    randString(7);
+
+
+  /*
+   * The test marker MUST be inside the GCLID.
+   *
+   * The Conversions Apps Script uses this marker
+   * to isolate these rows from production.
+   */
+
+  const gclid =
+    TEST_MARKER +
+    "-" +
+    randString(24);
+
+
+  const now =
+    new Date();
+
+
+  const firestoreTimestamp =
+    Timestamp.now();
+
+
+  const docPath =
+    "projects/" +
+    projectId +
+    "/clicks/" +
+    token;
+
+
   const payload = {
-    conversion_name: convName,
-    conversion_value_final: null,
-    conversion_value_initial: null,
-    conversion_value_source: "whatsapp_message",
-    conversion_value_uploaded: false,
-    conversion_value_uploaded_at: null,
-    ctaId: "hero_sec_cta", // hardcoded test value
-    gclid: gclidValue,
-    google_campaign_id: campaignIdValue,
-    google_sheet_exported: false,
-    lead_value_estimate: 70,
-    page: `${projectId}.test.com/`,
-    projectId: projectId,
-    token: token,
-    ts: now.toISOString(), // String ISO
-    upload_version: 0,
-    used: true,
-    used_at: firestoreTimestamp, // Timestamp object
-    whatsapp_from: "201277358620",
-    whatsapp_msg_id: `wamid.TEST${randString(20)}`
+
+    token:
+      token,
+
+    projectId:
+      projectId,
+
+    gclid:
+      gclid,
+
+    google_campaign_id:
+      null,
+
+    conversion_name:
+      getTestConversionName(
+        projectId
+      ),
+
+    conversion_value_initial:
+      LEAD_VALUE_ESTIMATE,
+
+    conversion_value_final:
+      null,
+
+    conversion_value_source:
+      "whatsapp_message",
+
+    conversion_value_uploaded:
+      false,
+
+    conversion_value_uploaded_at:
+      null,
+
+    lead_value_estimate:
+      LEAD_VALUE_ESTIMATE,
+
+    upload_version:
+      0,
+
+    used:
+      true,
+
+    used_at:
+      firestoreTimestamp,
+
+    ts:
+      now.toISOString(),
+
+    ctaId:
+      "stress_test",
+
+    page:
+      "stress-test/" +
+      projectId
+
   };
 
-  // Log what we are doing
-  console.log(`   [${isNoGclid ? 'NO-GCLID' : 'GCLID'}] Creating doc in ${projectId}...`);
-  
-  // Write to DB (Click Doc + Index)
-  const batch = db.batch();
-  
-  const clickRef = db.doc(docPath);
-  batch.set(clickRef, payload);
 
-  const indexRef = db.doc(`tokenIndex/${token}`);
-  batch.set(indexRef, {
-    token: token,
-    projectId: projectId,
-    clickPath: docPath,
-    created_at: firestoreTimestamp
-  });
+  const indexPayload = {
+
+    token:
+      token,
+
+    projectId:
+      projectId,
+
+    clickPath:
+      docPath,
+
+    created_at:
+      firestoreTimestamp
+
+  };
+
+
+  return {
+
+    token,
+
+    gclid,
+
+    docPath,
+
+    payload,
+
+    indexPayload
+
+  };
+
+}
+
+
+/* =========================================================
+   CREATE ONE CONVERSION
+   ========================================================= */
+
+async function createSingleConversion(
+  projectId,
+  number
+) {
+
+  const test =
+    createTestData(
+      projectId
+    );
+
+
+  const batch =
+    db.batch();
+
+
+  const clickRef =
+    db.doc(
+      test.docPath
+    );
+
+
+  const indexRef =
+    db.doc(
+      "tokenIndex/" +
+      test.token
+    );
+
+
+  batch.set(
+    clickRef,
+    test.payload
+  );
+
+
+  batch.set(
+    indexRef,
+    test.indexPayload
+  );
+
 
   await batch.commit();
+
+
+  console.log(
+
+    "[" +
+    String(number).padStart(3, "0") +
+    "] " +
+
+    projectId +
+
+    " | token=" +
+    test.token
+
+  );
+
+
+  return test.token;
+
 }
 
 
-/* ========================================================================
-   =========================== MAIN LOGIC =================================
-   ======================================================================== */
+/* =========================================================
+   MODE 1 — ZIGZAG
+   ========================================================= */
 
-(async () => {
-  try {
-    if (USE_ZIGZAG_MODE) {
-      await runZigzagMode();
-    } else {
-      await runBatchMode();
-    }
-    process.exit(0);
-  } catch (err) {
-    console.error('❌ Script failed:', err);
-    process.exit(1);
-  }
-})();
-
-
-/* ---------------------------------------------------------
-   MODE 1: ZIGZAG (Round Robin with Timer)
-   --------------------------------------------------------- */
 async function runZigzagMode() {
-  console.log(`\n🚀 STARTING ZIGZAG MODE`);
-  console.log(`   Projects: ${PROJECT_IDS.join(', ')}`);
-  console.log(`   Delay: ${ZIGZAG_DELAY_MS}ms`);
 
-  // --- PHASE 1: Standard GCLID Conversions ---
-  const totalStandard = PROJECT_IDS.length * ZIGZAG_GCLID_COUNT_PER_PROJECT;
-  console.log(`\n--- Phase 1: Creating ${totalStandard} Standard GCLID Conversions ---`);
-  
-  for (let i = 0; i < totalStandard; i++) {
-    // Round Robin Logic: i % length gives us 0, 1, 0, 1...
-    const projectIndex = i % PROJECT_IDS.length;
-    const projectId = PROJECT_IDS[projectIndex];
 
-    await sleep(ZIGZAG_DELAY_MS);
-    await createConversionDoc(projectId, false); // false = has gclid
+  if (
+    ZIGZAG_PROJECT_IDS.length !== 2
+  ) {
+
+    throw new Error(
+      "ZIGZAG_PROJECT_IDS must contain exactly TWO projects."
+    );
+
   }
 
-  // --- PHASE 2: No-GCLID Conversions (if enabled) ---
-  if (ZIGZAG_INCLUDE_NO_GCLID) {
-    const totalNoGclid = PROJECT_IDS.length * ZIGZAG_NO_GCLID_COUNT;
-    console.log(`\n--- Phase 2: Creating ${totalNoGclid} No-GCLID Conversions ---`);
 
-    for (let i = 0; i < totalNoGclid; i++) {
-      const projectIndex = i % PROJECT_IDS.length;
-      const projectId = PROJECT_IDS[projectIndex];
+  validateProject(
+    ZIGZAG_PROJECT_IDS[0]
+  );
 
-      await sleep(ZIGZAG_DELAY_MS);
-      await createConversionDoc(projectId, true); // true = no gclid
+  validateProject(
+    ZIGZAG_PROJECT_IDS[1]
+  );
+
+
+  if (
+    ZIGZAG_PROJECT_IDS[0] ===
+    ZIGZAG_PROJECT_IDS[1]
+  ) {
+
+    throw new Error(
+      "Zigzag projects must be different."
+    );
+
+  }
+
+
+  const total =
+    ZIGZAG_COUNT_PER_PROJECT *
+    2;
+
+
+  console.log("");
+  console.log(
+    "============================================"
+  );
+  console.log(
+    "WaTrck ZIGZAG STRESS TEST"
+  );
+  console.log(
+    "============================================"
+  );
+
+  console.log(
+    "Project A:",
+    ZIGZAG_PROJECT_IDS[0]
+  );
+
+  console.log(
+    "Project B:",
+    ZIGZAG_PROJECT_IDS[1]
+  );
+
+  console.log(
+    "Conversions per project:",
+    ZIGZAG_COUNT_PER_PROJECT
+  );
+
+  console.log(
+    "Total conversions:",
+    total
+  );
+
+  console.log(
+    "Delay:",
+    ZIGZAG_DELAY_MS + "ms"
+  );
+
+  console.log("");
+
+
+  const createdTokens = [];
+
+
+  for (
+    let i = 0;
+    i < total;
+    i++
+  ) {
+
+    /*
+     * Round robin:
+     *
+     * 0 → project A
+     * 1 → project B
+     * 2 → project A
+     * 3 → project B
+     */
+
+    const projectId =
+      ZIGZAG_PROJECT_IDS[
+        i % 2
+      ];
+
+
+    /*
+     * No delay before the first record.
+     */
+
+    if (i > 0) {
+
+      await sleep(
+        ZIGZAG_DELAY_MS
+      );
+
     }
-  } else {
-    console.log(`\n--- Phase 2 Skipped (Toggle OFF) ---`);
+
+
+    const token =
+      await createSingleConversion(
+        projectId,
+        i + 1
+      );
+
+
+    createdTokens.push(
+      token
+    );
+
   }
 
-  console.log(`\n✅ Zigzag Test Complete.`);
+
+  console.log("");
+  console.log(
+    "============================================"
+  );
+
+  console.log(
+    "ZIGZAG TEST COMPLETE"
+  );
+
+  console.log(
+    "Created:",
+    createdTokens.length,
+    "conversions"
+  );
+
+  console.log(
+    "============================================"
+  );
+
+  console.log("");
+
+
+  console.log(
+    "Tokens created:"
+  );
+
+  console.log(
+    createdTokens.join("\n")
+  );
+
 }
 
 
-/* ---------------------------------------------------------
-   MODE 2: BATCH (Original Logic)
-   --------------------------------------------------------- */
-async function runBatchMode() {
-  console.log(`\n📦 STARTING BATCH MODE (Original)`);
-  const BATCH_SIZE = 500;
-  const now = admin.firestore.FieldValue.serverTimestamp();
+/* =========================================================
+   MODE 2 — BULK
+   ========================================================= */
+
+async function runBulkMode() {
+
+
+  validateProject(
+    BULK_PROJECT_ID
+  );
+
+
+  if (
+    BULK_CONVERSIONS_PER_BATCH >
+    200
+  ) {
+
+    throw new Error(
+      "BULK_CONVERSIONS_PER_BATCH must be 200 or less."
+    );
+
+  }
+
+
+  console.log("");
+  console.log(
+    "============================================"
+  );
+
+  console.log(
+    "WaTrck BULK STRESS TEST"
+  );
+
+  console.log(
+    "============================================"
+  );
+
+  console.log(
+    "Project:",
+    BULK_PROJECT_ID
+  );
+
+  console.log(
+    "Conversions:",
+    BULK_COUNT
+  );
+
+  console.log("");
+
+
   let totalCreated = 0;
 
-  for (const projectId of PROJECT_IDS) {
-    let createdForProject = 0;
-    console.log(`   Processing Project: ${projectId}`);
+  const createdTokens = [];
 
-    for (let i = 0; i < BATCH_COUNT_PER_PROJECT; i += BATCH_SIZE) {
-      const batch = db.batch();
-      const slice = Math.min(BATCH_SIZE, BATCH_COUNT_PER_PROJECT - i);
 
-      for (let j = 0; j < slice; j++) {
-        const order = createdForProject + 1;
-        // Old ID format retained for batch mode
-        const testId = `${TEST_MARKER}-${projectId}-${randString(5)}-${order}`;
-        const token = testId;
+  while (
+    totalCreated <
+    BULK_COUNT
+  ) {
 
-        // Determine GCLID based on old batch config
-        let gclid = testId;
-        if (BATCH_INCLUDE_EMPTY_GCLID && order <= BATCH_EMPTY_GCLID_COUNT) {
-          gclid = ""; 
-        }
 
-        const clickRef = db.doc(`projects/${projectId}/clicks/${token}`);
-        batch.set(clickRef, {
-          token,
-          projectId,
-          gclid, 
-          conversion_name: 'TEST_CONVERSION_BATCH',
-          used: true,
-          used_at: now,
-          ts: now,
-          page: 'test-batch',
-          lead_value_estimate: 10,
-          conversion_value_uploaded: false,
-          google_sheet_exported: false,
-          upload_version: 0,
-          whatsapp_from: null,
-          google_campaign_id: null
-        });
+    const remaining =
+      BULK_COUNT -
+      totalCreated;
 
-        const indexRef = db.doc(`tokenIndex/${token}`);
-        batch.set(indexRef, {
-          token,
-          projectId,
-          clickPath: `projects/${projectId}/clicks/${token}`,
-          created_at: now
-        });
 
-        createdForProject++;
-        totalCreated++;
-      }
-      await batch.commit();
+    const thisBatchCount =
+      Math.min(
+        BULK_CONVERSIONS_PER_BATCH,
+        remaining
+      );
+
+
+    const batch =
+      db.batch();
+
+
+    const batchTokens = [];
+
+
+    for (
+      let i = 0;
+      i < thisBatchCount;
+      i++
+    ) {
+
+
+      const test =
+        createTestData(
+          BULK_PROJECT_ID
+        );
+
+
+      const clickRef =
+        db.doc(
+          test.docPath
+        );
+
+
+      const indexRef =
+        db.doc(
+          "tokenIndex/" +
+          test.token
+        );
+
+
+      batch.set(
+        clickRef,
+        test.payload
+      );
+
+
+      batch.set(
+        indexRef,
+        test.indexPayload
+      );
+
+
+      batchTokens.push(
+        test.token
+      );
+
+
     }
-    console.log(`   -> Created ${createdForProject} docs.`);
+
+
+    await batch.commit();
+
+
+    totalCreated +=
+      thisBatchCount;
+
+
+    createdTokens.push(
+      ...batchTokens
+    );
+
+
+    console.log(
+
+      "Committed batch: " +
+      thisBatchCount +
+
+      " conversions | Total: " +
+      totalCreated +
+      "/" +
+      BULK_COUNT
+
+    );
+
   }
-  console.log(`✅ Batch Test Complete. Total: ${totalCreated}`);
+
+
+  console.log("");
+  console.log(
+    "============================================"
+  );
+
+  console.log(
+    "BULK TEST COMPLETE"
+  );
+
+  console.log(
+    "Project:",
+    BULK_PROJECT_ID
+  );
+
+  console.log(
+    "Created:",
+    totalCreated
+  );
+
+  console.log(
+    "============================================"
+  );
+
+  console.log("");
+
+
+  console.log(
+    "Tokens created:"
+  );
+
+  console.log(
+    createdTokens.join("\n")
+  );
+
 }
 
 
+/* =========================================================
+   MAIN
+   ========================================================= */
+
+(async function main() {
+
+  try {
+
+
+    console.log("");
+    console.log(
+      "Firebase project: aida-muscat-wa-tracking"
+    );
+
+    console.log(
+      "Test mode:",
+      TEST_MODE
+    );
+
+
+    if (
+      TEST_MODE ===
+      "zigzag"
+    ) {
+
+      await runZigzagMode();
+
+    }
+
+    else if (
+      TEST_MODE ===
+      "bulk"
+    ) {
+
+      await runBulkMode();
+
+    }
+
+    else {
+
+      throw new Error(
+        'TEST_MODE must be either "zigzag" or "bulk".'
+      );
+
+    }
+
+
+    process.exit(0);
+
+
+  } catch (error) {
+
+
+    console.error("");
+    console.error(
+      "TEST FAILED:"
+    );
+
+    console.error(
+      error
+    );
+
+
+    process.exit(1);
+
+  }
+
+})();
