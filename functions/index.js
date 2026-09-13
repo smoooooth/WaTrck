@@ -1523,208 +1523,821 @@ every hour: 0 * * *
 every day(24h): 0 0 * *
  */
 
-// ---------- Final Cleanup Function (drop-in) ----------
+// ---------- Production Firestore Cleanup ----------
 (function () {
-  // Resolve existing globals or require them
-  let fns;
-  try { fns = functions; } catch (e) { fns = require('firebase-functions'); }
 
-  let adm;
-  try { adm = admin; } catch (e) { adm = require('firebase-admin'); if (!adm.apps || adm.apps.length === 0) adm.initializeApp(); }
+  /*
+   * PRODUCTION RULE:
+   *
+   * Delete ONLY click docs where:
+   *
+   *   used === false
+   *   AND
+   *   age >= 24 hours
+   *
+   * NEVER automatically delete:
+   * - used === true conversions
+   * - _testproduction_ conversions
+   * - WhatsApp conversations/messages
+   * - whatsappSenderIndex
+   *
+   * Test conversions are cleaned manually with the dedicated
+   * Helping Functions cleanup script.
+   */
 
-  let database;
-  try { database = db; } catch (e) { database = adm.firestore(); }
+  // ================= CONFIG =================
 
-  // ============= CONFIG =============
-  const UNUSED_TTL_DAYS = 1;                 // how old must a token with used = false be to get deleted during the daily clean ups?
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
-  const UNUSED_TTL_MS = UNUSED_TTL_DAYS * MS_PER_DAY;
+  const UNUSED_TTL_HOURS = 24;
 
-  const CLEANUP_DRY_RUN = false;             // <-- true to only log; false to actually delete
-  const SCHEDULE_EXPRESSION = 'every 24 hours';
-  const TIMEZONE = 'UTC';
-  // ==================================
+  const UNUSED_TTL_MS =
+    UNUSED_TTL_HOURS *
+    60 *
+    60 *
+    1000;
 
-  async function nowMillis() { return Date.now(); }
+  /*
+   * KEEP TRUE FOR FIRST TEST.
+   *
+   * After we verify the logs are correct,
+   * change this to false and redeploy.
+   */
+  const CLEANUP_DRY_RUN = true;
 
-  // Robust ts parsing: Firestore Timestamp, ISO string, ms number
-  function parseTsToMs(ts) {
-    if (!ts) return null;
-    if (typeof ts.toMillis === 'function') {
-      try { return ts.toMillis(); } catch (e) { /* fallthrough */ }
+  /*
+   * Number of cleanup transactions allowed to run
+   * concurrently.
+   *
+   * Each transaction re-checks the click before deleting it,
+   * preventing a click that became used during cleanup from
+   * being accidentally deleted.
+   */
+  const CLEANUP_CONCURRENCY = 20;
+
+
+  // ================= HELPERS =================
+
+  function parseCleanupTimestampToMs(value) {
+    if (!value) {
+      return null;
     }
-    if (typeof ts === 'number') return ts;
-    if (typeof ts === 'string') {
-      const p = Date.parse(ts);
-      return Number.isNaN(p) ? null : p;
+
+    // Firestore Timestamp
+    if (
+      value &&
+      typeof value.toMillis === 'function'
+    ) {
+      try {
+        return value.toMillis();
+      } catch (_) {}
     }
+
+    // Firestore serialized Timestamp-like object
+    if (
+      value &&
+      typeof value === 'object' &&
+      typeof value._seconds === 'number'
+    ) {
+      return (
+        value._seconds * 1000 +
+        Math.floor(
+          Number(value._nanoseconds || 0) /
+          1000000
+        )
+      );
+    }
+
+    // Milliseconds
+    if (
+      typeof value === 'number' &&
+      Number.isFinite(value)
+    ) {
+      return value;
+    }
+
+    // ISO/date string
+    if (
+      typeof value === 'string'
+    ) {
+      const parsed =
+        Date.parse(value);
+
+      if (
+        Number.isFinite(parsed)
+      ) {
+        return parsed;
+      }
+    }
+
     return null;
   }
 
-  async function runCleanupLogic(opts = {}) {
-    const dryRun = (typeof opts.dryRun === 'boolean') ? opts.dryRun : CLEANUP_DRY_RUN;
-    const now = await nowMillis();
-    const cutoffMs = now - UNUSED_TTL_MS;
 
-    console.log('🧹 Cleanup job started');
-    console.log('Dry run:', dryRun);
-    console.log('Unused TTL (days):', UNUSED_TTL_DAYS);
-    console.log('Schedule:', SCHEDULE_EXPRESSION, 'Timezone:', TIMEZONE);
+  function getClickTimestampMs(data) {
+    if (!data) {
+      return null;
+    }
 
-    let considered = 0;
-    let deletedCount = 0;
-    let matchedTestCount = 0;
-    let matchedExpiredCount = 0;
+    return parseCleanupTimestampToMs(
+      data.ts ||
+      data.createdAt ||
+      data.created_at ||
+      data.timestamp ||
+      data.ts_ms
+    );
+  }
 
-    try {
-      const snap = await database.collectionGroup('clicks').get();
-      considered = snap.size;
 
-      for (const doc of snap.docs) {
-        const data = doc.data() || {};
-        const ref = doc.ref;
+  async function processCleanupCandidate(
+    ref,
+    cutoffMs,
+    dryRun
+  ) {
 
-        const token = (data.token && String(data.token)) || doc.id;
-        const projectId = data.projectId || '(unknown project)';
-        const gclidRaw = (typeof data.gclid === 'string') ? data.gclid : (data.gclid ? String(data.gclid) : '');
-        const gclid = gclidRaw || '';
-        const used = data.used === true;
+    /*
+     * Dry run requires no transaction because nothing
+     * destructive happens.
+     */
+    if (dryRun) {
+      const snap =
+        await ref.get();
 
-        const tsMs = parseTsToMs(data.ts || data.createdAt || data.ts_ms || data.timestamp);
-        const ageMs = tsMs ? (now - tsMs) : null;
-        const ageDays = ageMs ? (ageMs / MS_PER_DAY) : null;
-        const ageMinutes = ageMs ? Math.round(ageMs / (60 * 1000)) : null;
+      if (!snap.exists) {
+        return {
+          status: 'missing'
+        };
+      }
 
-        const gclidIsTest = (gclid || '').toLowerCase().includes('test');
+      const data =
+        snap.data() || {};
 
-        // DECIDE reason:
-        // Rule A: immediate delete for test gclid (regardless of used)
-        // Rule B: delete any unused token older than TTL (no test check)
-        let reason = null;
-        if (gclidIsTest) {
-          reason = 'test_gclid';
-          matchedTestCount++;
-        } else if (!used && tsMs && tsMs <= cutoffMs) {
-          reason = 'unused_expired';
-          matchedExpiredCount++;
+      /*
+       * Require explicit false.
+       *
+       * Missing/malformed "used" fields are NOT deleted.
+       */
+      if (
+        data.used !== false
+      ) {
+        return {
+          status: 'not_unused'
+        };
+      }
+
+      const tsMs =
+        getClickTimestampMs(data);
+
+      if (!tsMs) {
+        return {
+          status: 'missing_timestamp'
+        };
+      }
+
+      if (
+        tsMs > cutoffMs
+      ) {
+        return {
+          status: 'not_expired'
+        };
+      }
+
+      return {
+        status: 'would_delete',
+        token: ref.id,
+        path: ref.path,
+        ageHours:
+          Math.round(
+            (
+              Date.now() - tsMs
+            ) /
+            (60 * 60 * 1000) *
+            10
+          ) / 10
+      };
+    }
+
+
+    /*
+     * REAL DELETE:
+     *
+     * Use a transaction so we re-read the document
+     * immediately before deleting it.
+     *
+     * This protects against:
+     *
+     * cleanup reads used=false
+     *        ↓
+     * user messages on WhatsApp
+     *        ↓
+     * webhook changes used=true
+     *        ↓
+     * cleanup must NOT delete it
+     */
+
+    return db.runTransaction(
+      async transaction => {
+
+        const freshSnap =
+          await transaction.get(ref);
+
+        if (!freshSnap.exists) {
+          return {
+            status: 'missing'
+          };
         }
 
-        if (!reason) {
-          // helpful debug logs for records that might be close to expiry
-          if (!used && tsMs) {
-            const minutesLeft = Math.round((cutoffMs - tsMs) / (60 * 1000));
-            if (minutesLeft <= 60 && minutesLeft > 0) {
-              console.log(`[CLEANUP-INFO] token=${token} will expire in ${minutesLeft} minutes (ageMinutes=${ageMinutes})`);
-            }
-          }
-          continue;
+        const freshData =
+          freshSnap.data() || {};
+
+        /*
+         * Safety condition #1:
+         * still explicitly unused.
+         */
+        if (
+          freshData.used !== false
+        ) {
+          return {
+            status: 'became_used'
+          };
         }
 
-        // LOG candidate (before deletion)
-        console.log(`[CLEANUP ${dryRun ? 'DRY-RUN' : 'DELETE'}]`, JSON.stringify({
-          projectId,
+        const freshTsMs =
+          getClickTimestampMs(
+            freshData
+          );
+
+        /*
+         * Safety condition #2:
+         * must have a valid timestamp.
+         */
+        if (!freshTsMs) {
+          return {
+            status: 'missing_timestamp'
+          };
+        }
+
+        /*
+         * Safety condition #3:
+         * still older than TTL.
+         */
+        if (
+          freshTsMs > cutoffMs
+        ) {
+          return {
+            status: 'not_expired'
+          };
+        }
+
+        const token =
+          ref.id;
+
+        const tokenIndexRef =
+          db.doc(
+            'tokenIndex/' +
+            token
+          );
+
+        /*
+         * Click + tokenIndex are deleted atomically.
+         *
+         * Either both deletes commit,
+         * or neither does.
+         */
+        transaction.delete(ref);
+        transaction.delete(
+          tokenIndexRef
+        );
+
+        return {
+          status: 'deleted',
           token,
-          reason,
-          used,
-          ageDays: ageDays !== null ? Number(ageDays.toFixed(2)) : 'unknown',
-          ageMinutes: ageMinutes !== null ? ageMinutes : 'unknown',
-          gclid,
-          clickPath: ref.path
-        }));
+          path: ref.path,
+          ageHours:
+            Math.round(
+              (
+                Date.now() -
+                freshTsMs
+              ) /
+              (60 * 60 * 1000) *
+              10
+            ) / 10
+        };
+      }
+    );
+  }
 
-        // PERFORM deletion (click doc + corresponding tokenIndex entry) if not dry-run
-        if (!dryRun) {
-          try {
-            // Delete the click doc
-            await ref.delete();
 
-            // Now attempt to delete corresponding tokenIndex entry
-            if (token) {
+  // ================= MAIN CLEANUP =================
+
+  async function runCleanupLogic(
+    options = {}
+  ) {
+
+    const dryRun =
+      typeof options.dryRun ===
+      'boolean'
+        ? options.dryRun
+        : CLEANUP_DRY_RUN;
+
+    const now =
+      Date.now();
+
+    const cutoffMs =
+      now -
+      UNUSED_TTL_MS;
+
+    console.log(
+      '========================================'
+    );
+
+    console.log(
+      '[CLEANUP] Starting production cleanup'
+    );
+
+    console.log(
+      '[CLEANUP] Dry run:',
+      dryRun
+    );
+
+    console.log(
+      '[CLEANUP] Unused TTL hours:',
+      UNUSED_TTL_HOURS
+    );
+
+    console.log(
+      '[CLEANUP] Cutoff:',
+      new Date(
+        cutoffMs
+      ).toISOString()
+    );
+
+
+    /*
+     * CRITICAL OPTIMIZATION:
+     *
+     * Do NOT scan used conversions anymore.
+     *
+     * Only retrieve explicitly unused click docs.
+     */
+    const snapshot =
+      await db
+        .collectionGroup('clicks')
+        .where(
+          'used',
+          '==',
+          false
+        )
+        .get();
+
+
+    console.log(
+      '[CLEANUP] Unused docs returned by Firestore:',
+      snapshot.size
+    );
+
+
+    const candidates = [];
+
+    let missingTimestamp = 0;
+    let notExpired = 0;
+
+
+    snapshot.forEach(
+      doc => {
+
+        const data =
+          doc.data() || {};
+
+        const tsMs =
+          getClickTimestampMs(
+            data
+          );
+
+        /*
+         * Never delete something whose age
+         * cannot be established safely.
+         */
+        if (!tsMs) {
+          missingTimestamp++;
+
+          console.log(
+            '[CLEANUP] SKIP missing timestamp:',
+            doc.ref.path
+          );
+
+          return;
+        }
+
+
+        if (
+          tsMs > cutoffMs
+        ) {
+          notExpired++;
+          return;
+        }
+
+
+        candidates.push(
+          doc.ref
+        );
+      }
+    );
+
+
+    console.log(
+      '[CLEANUP] Expired unused candidates:',
+      candidates.length
+    );
+
+    console.log(
+      '[CLEANUP] Unused but not expired:',
+      notExpired
+    );
+
+    console.log(
+      '[CLEANUP] Missing timestamp:',
+      missingTimestamp
+    );
+
+
+    const counts = {
+      deleted: 0,
+      wouldDelete: 0,
+      becameUsed: 0,
+      notUnused: 0,
+      notExpired: 0,
+      missingTimestamp: 0,
+      missing: 0,
+      errors: 0
+    };
+
+
+    const errors = [];
+
+
+    /*
+     * Process in controlled concurrent groups.
+     */
+    for (
+      let offset = 0;
+      offset < candidates.length;
+      offset += CLEANUP_CONCURRENCY
+    ) {
+
+      const chunk =
+        candidates.slice(
+          offset,
+          offset +
+          CLEANUP_CONCURRENCY
+        );
+
+
+      const results =
+        await Promise.all(
+          chunk.map(
+            async ref => {
               try {
-                const idxRef = database.doc(`tokenIndex/${token}`);
-                const idxSnap = await idxRef.get();
-                if (idxSnap.exists) {
-                  const idxData = idxSnap.data() || {};
-                  // Safety: remove only if clickPath matches the doc path (if provided), otherwise still remove
-                  if (!idxData.clickPath || idxData.clickPath === ref.path) {
-                    await idxRef.delete();
-                    console.log(`[CLEANUP] tokenIndex/${token} deleted (matched clickPath)`);
-                  } else {
-                    // If clickPath mismatch, log and still delete? We'll be conservative and delete anyway to keep index clean.
-                    // If you want stricter safety, change to skip deletion here.
-                    await idxRef.delete();
-                    console.log(`[CLEANUP] tokenIndex/${token} deleted (clickPath mismatch: index=${idxData.clickPath} expected=${ref.path})`);
-                  }
-                } else {
-                  console.log(`[CLEANUP] tokenIndex/${token} not found (already missing)`);
-                }
-              } catch (idxErr) {
-                console.error(`[CLEANUP] failed to delete tokenIndex/${token}`, idxErr && idxErr.stack ? idxErr.stack : idxErr);
+
+                return await processCleanupCandidate(
+                  ref,
+                  cutoffMs,
+                  dryRun
+                );
+
+              } catch (error) {
+
+                console.error(
+                  '[CLEANUP] Candidate failed:',
+                  ref.path,
+                  error &&
+                  error.stack
+                    ? error.stack
+                    : error
+                );
+
+                errors.push({
+                  path: ref.path,
+                  error:
+                    String(
+                      error &&
+                      (
+                        error.message ||
+                        error
+                      )
+                    )
+                });
+
+                return {
+                  status: 'error'
+                };
               }
             }
+          )
+        );
 
-            deletedCount++;
-            console.log(`[CLEANUP] deleted click doc ${ref.path}`);
-          } catch (delErr) {
-            console.error(`[CLEANUP] failed to delete click doc ${ref.path}`, delErr && delErr.stack ? delErr.stack : delErr);
+
+      results.forEach(
+        result => {
+
+          if (!result) {
+            return;
+          }
+
+
+          switch (
+            result.status
+          ) {
+
+            case 'deleted':
+              counts.deleted++;
+
+              console.log(
+                '[CLEANUP] DELETED:',
+                result.path,
+                'ageHours=' +
+                result.ageHours
+              );
+
+              break;
+
+
+            case 'would_delete':
+              counts.wouldDelete++;
+
+              console.log(
+                '[CLEANUP] DRY RUN would delete:',
+                result.path,
+                'ageHours=' +
+                result.ageHours
+              );
+
+              break;
+
+
+            case 'became_used':
+              counts.becameUsed++;
+              break;
+
+
+            case 'not_unused':
+              counts.notUnused++;
+              break;
+
+
+            case 'not_expired':
+              counts.notExpired++;
+              break;
+
+
+            case 'missing_timestamp':
+              counts.missingTimestamp++;
+              break;
+
+
+            case 'missing':
+              counts.missing++;
+              break;
+
+
+            case 'error':
+              counts.errors++;
+              break;
           }
         }
-      } // end for
-
-      console.log(`🧹 Cleanup job finished. considered=${considered}, matchedTest=${matchedTestCount}, matchedExpired=${matchedExpiredCount}, deleted=${deletedCount}`);
-      return { considered, matchedTestCount, matchedExpiredCount, deletedCount };
-    } catch (err) {
-      console.error('Cleanup job failed:', err && err.stack ? err.stack : err);
-      throw err;
+      );
     }
-  } // end runCleanupLogic
 
-  // Register scheduled job if supported; otherwise expose HTTP fallback
-  try {
-    if (fns && fns.pubsub && typeof fns.pubsub.schedule === 'function') {
-      if (!exports.cleanupFirestore) {
-        exports.cleanupFirestore = fns.pubsub
-          .schedule(SCHEDULE_EXPRESSION)
-          .timeZone(TIMEZONE)
-          .onRun(async (context) => {
-            await runCleanupLogic();
-            return null;
-          });
-        console.log('cleanupFirestore scheduled via functions.pubsub.schedule:', SCHEDULE_EXPRESSION);
-      } else {
-        console.log('cleanupFirestore already exported, skipping schedule registration');
-      }
-    } else {
-      // create HTTP fallback: allow one-off override with ?dryRun=true|false
-      if (!exports.cleanupFirestoreHttp) {
-        exports.cleanupFirestoreHttp = fns.https.onRequest(async (req, res) => {
-          try {
-            // Query or body param can override dryRun for one-off runs
-            let dryRun = CLEANUP_DRY_RUN;
-            const q = req.query || {};
-            const b = req.body || {};
-            if (typeof q.dryRun !== 'undefined') {
-              dryRun = (String(q.dryRun) !== 'false');
-            } else if (typeof b.dryRun !== 'undefined') {
-              dryRun = (b.dryRun !== false && String(b.dryRun) !== 'false');
-            }
-            const result = await runCleanupLogic({ dryRun });
-            res.status(200).json({ ok: true, result });
-          } catch (err) {
-            console.error('cleanupFirestoreHttp error:', err && err.stack ? err.stack : err);
-            res.status(500).json({ ok: false, error: String(err) });
-          }
-        });
-        console.log('cleanupFirestoreHttp registered (fallback)');
-      } else {
-        console.log('cleanupFirestoreHttp already exported, skipping http registration');
-      }
-    }
-  } catch (err) {
-    console.error('Failed to register cleanup trigger:', err && err.stack ? err.stack : err);
-    // do not throw here to avoid breaking module load
+
+    const summary = {
+      dryRun,
+
+      ttlHours:
+        UNUSED_TTL_HOURS,
+
+      unusedDocsScanned:
+        snapshot.size,
+
+      expiredCandidates:
+        candidates.length,
+
+      initialMissingTimestamp:
+        missingTimestamp,
+
+      initialNotExpired:
+        notExpired,
+
+      deleted:
+        counts.deleted,
+
+      wouldDelete:
+        counts.wouldDelete,
+
+      becameUsed:
+        counts.becameUsed,
+
+      notUnused:
+        counts.notUnused,
+
+      recheckNotExpired:
+        counts.notExpired,
+
+      recheckMissingTimestamp:
+        counts.missingTimestamp,
+
+      disappearedBeforeDelete:
+        counts.missing,
+
+      errors:
+        counts.errors,
+
+      errorDetails:
+        errors.slice(
+          0,
+          50
+        )
+    };
+
+
+    console.log(
+      '[CLEANUP] Finished:',
+      JSON.stringify(
+        summary
+      )
+    );
+
+    console.log(
+      '========================================'
+    );
+
+
+    return summary;
   }
-})(); 
+
+
+  // ================= HTTP ENDPOINT =================
+
+  exports.cleanupFirestoreHttp =
+    functions
+      .runWith({
+        timeoutSeconds: 540,
+        memory: '256MB'
+      })
+      .https
+      .onRequest(
+        async (
+          req,
+          res
+        ) => {
+
+          try {
+
+            /*
+             * Only GET/POST are accepted.
+             */
+            if (
+              req.method !== 'GET' &&
+              req.method !== 'POST'
+            ) {
+              return res
+                .status(405)
+                .json({
+                  ok: false,
+                  error:
+                    'Method not allowed'
+                });
+            }
+
+
+            /*
+             * Protect the destructive cleanup endpoint
+             * with the SAME export secret already used
+             * by the Sheets/backend pipeline.
+             *
+             * Cloud Scheduler must send:
+             *
+             * x-export-secret: <EXPORT_SECRET>
+             */
+            const suppliedSecret =
+              String(
+                req.get(
+                  'x-export-secret'
+                ) || ''
+              );
+
+            const expectedSecret =
+              String(
+                await getExportSecret()
+              );
+
+
+            if (
+              !suppliedSecret ||
+              suppliedSecret !==
+                expectedSecret
+            ) {
+              return res
+                .status(403)
+                .json({
+                  ok: false,
+                  error:
+                    'Forbidden'
+                });
+            }
+
+
+            /*
+             * Default comes from CLEANUP_DRY_RUN.
+             *
+             * Authenticated callers may explicitly use:
+             *
+             * ?dryRun=true
+             * ?dryRun=false
+             */
+            let dryRun =
+              CLEANUP_DRY_RUN;
+
+
+            if (
+              typeof
+                req.query.dryRun !==
+              'undefined'
+            ) {
+
+              const raw =
+                String(
+                  req.query.dryRun
+                )
+                  .trim()
+                  .toLowerCase();
+
+
+              if (
+                raw !== 'true' &&
+                raw !== 'false'
+              ) {
+                return res
+                  .status(400)
+                  .json({
+                    ok: false,
+                    error:
+                      'dryRun must be true or false'
+                  });
+              }
+
+
+              dryRun =
+                raw === 'true';
+            }
+
+
+            const result =
+              await runCleanupLogic({
+                dryRun
+              });
+
+
+            return res
+              .status(200)
+              .json({
+                ok: true,
+                result
+              });
+
+
+          } catch (error) {
+
+            console.error(
+              'cleanupFirestoreHttp error:',
+              error &&
+              error.stack
+                ? error.stack
+                : error
+            );
+
+
+            return res
+              .status(500)
+              .json({
+                ok: false,
+                error:
+                  String(
+                    error &&
+                    (
+                      error.message ||
+                      error
+                    )
+                  )
+              });
+          }
+        }
+      );
+
+
+  console.log(
+    'cleanupFirestoreHttp registered (production-safe)'
+  );
+
+})();
+// ---------- end production cleanup ----------
 // ---------- end final cleanup ----------
 
 
