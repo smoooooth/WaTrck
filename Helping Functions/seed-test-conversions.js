@@ -26,7 +26,7 @@ const db = getFirestore();
    ========================================================= */
 
 // "zigzag" or "bulk"
-const TEST_MODE = "bulk";
+const TEST_MODE = "zigzag";
 
 // All valid projects in the system
 const PROJECT_IDS = [
