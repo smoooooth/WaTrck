@@ -55,7 +55,7 @@ const ZIGZAG_PROJECT_IDS = [
 ];
 
 // Number of conversions created PER PROJECT
-const ZIGZAG_COUNT_PER_PROJECT = 10;
+const ZIGZAG_COUNT_PER_PROJECT = 25;
 
 // Delay between each conversion
 // 1000 = 1 second

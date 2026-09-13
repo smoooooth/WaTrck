@@ -20,7 +20,7 @@
  *   - Google Sheets rows
  *
  * Run:
- *   node delete_docs_by_token_v2.js
+ *   node token-cleanup.js
  */
 
 const {
