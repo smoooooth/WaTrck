@@ -166,6 +166,7 @@ exports.saveToken = functions.https.onRequest(async (req, res) => {
       conversion_value_uploaded_at: null,
       conversion_value_source: null,
       upload_version: 0,
+      adjustment_pending: false,
       google_campaign_id: campaignId
     };
 
@@ -778,6 +779,7 @@ app.get('/exports/adjustments-pending', requireSecret, async (req, res) => {
       const colRef = db.collection(basePath);
       const q = colRef
         .where('used', '==', true)
+        .where('adjustment_pending', '==', true)
         .orderBy('used_at', 'asc')
         .limit(limit);
       snapshot = await q.get();
@@ -786,6 +788,7 @@ app.get('/exports/adjustments-pending', requireSecret, async (req, res) => {
       // NOTE: ordering by used_at across collectionGroup may require an index in Firestore console
       const q = db.collectionGroup('clicks')
         .where('used', '==', true)
+        .where('adjustment_pending', '==', true)
         .orderBy('used_at', 'asc')
         .limit(limit);
       snapshot = await q.get();
@@ -928,77 +931,143 @@ app.get('/exports/adjustments-pending', requireSecret, async (req, res) => {
 
 
 
-
-// POST /exports/mark-exported?project=<project>&secret=<secret>
-// Body: { order_ids: ['A','B'] }
-// Marks conversion_value_uploaded = true and sets timestamps
-// ALSO marks sales_sheet_quality_uploaded = true so sales-trigger is cleared.
-app.post('/exports/mark-exported', requireSecret, express.json(), async (req, res) => {
-  try {
-    const project = req.query.project;
-    if (!project) return res.status(400).json({ error: 'Missing project' });
-
-    const orderIds = (req.body && Array.isArray(req.body.order_ids)) ? req.body.order_ids : [];
-    if (!orderIds.length) return res.status(400).json({ error: 'No order_ids provided' });
-
-    const basePath = `projects/${project}/clicks`;
-    const batch = db.batch();
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    const updated = [];
-
-    // primary batched update
-    for (const id of orderIds) {
-      const docRef = db.doc(`${basePath}/${id}`);
-      batch.update(docRef, {
-        conversion_value_uploaded: true,
-        conversion_value_uploaded_at: now,
-        google_sheet_exported: true,
-        google_sheet_export_job: `apps-script-${Date.now()}`,
-        exported_once: true,
-        // 👇 NEW: clear sales trigger for the current state
-        sales_sheet_quality_uploaded: true,
-        sales_sheet_last_uploaded_at: now
-      });
-      updated.push(id);
-    }
-
+/**
+ * POST /exports/mark-adjustments-exported?project=<project>&secret=<secret>
+ * Body: { items: [ { order_id: '...', upload_version: 3 }, ... ] }
+ *
+ * Marks the exported version.
+ * Clears adjustment_pending ONLY if no newer version appeared meanwhile.
+ */
+app.post(
+  '/exports/mark-adjustments-exported',
+  requireSecret,
+  express.json(),
+  async (req, res) => {
     try {
-      await batch.commit();
-      console.log(`mark-exported: batch commit success for project=${project} count=${updated.length}`);
-      return res.json({ success: true, updated, errors: [] });
-    } catch (batchErr) {
-      console.error('mark-exported: batch commit failed, falling back to per-doc updates', batchErr);
+      const project = req.query.project;
 
-      // fallback: per-doc updates
-      const fallbackUpdated = [];
-      const fallbackErrors = [];
-      for (const id of orderIds) {
-        const docRef = db.doc(`${basePath}/${id}`);
-        try {
-          await docRef.update({
-            conversion_value_uploaded: true,
-            conversion_value_uploaded_at: admin.firestore.FieldValue.serverTimestamp(),
-            google_sheet_exported: true,
-            google_sheet_export_job: `apps-script-${Date.now()}`,
-            exported_once: true,
-            // 👇 NEW: clear sales trigger for the current state
-            sales_sheet_quality_uploaded: true,
-            sales_sheet_last_uploaded_at: admin.firestore.FieldValue.serverTimestamp()
+      if (!project) {
+        return res.status(400).json({
+          error: 'Missing project'
+        });
+      }
+
+      const items =
+        req.body && Array.isArray(req.body.items)
+          ? req.body.items
+          : [];
+
+      if (!items.length) {
+        return res.status(400).json({
+          error: 'No items provided'
+        });
+      }
+
+      const basePath = `projects/${project}/clicks`;
+      const updated = [];
+      const errors = [];
+
+      for (const item of items) {
+        const id = item.order_id;
+
+        const exportedVersion =
+          typeof item.upload_version === 'number'
+            ? item.upload_version
+            : null;
+
+        if (!id || exportedVersion === null) {
+          errors.push({
+            id,
+            error: 'Missing order_id or upload_version'
           });
-          fallbackUpdated.push(id);
-        } catch (e) {
-          fallbackErrors.push({ id, error: String(e) });
-          console.error('mark-exported single update error', id, e);
+          continue;
+        }
+
+        const docRef = db.doc(`${basePath}/${id}`);
+
+        try {
+          const result = await db.runTransaction(async tx => {
+            const snap = await tx.get(docRef);
+
+            if (!snap.exists) {
+              throw new Error(
+                `Document not found: ${docRef.path}`
+              );
+            }
+
+            const data = snap.data() || {};
+
+            const currentUploadVersion =
+              typeof data.upload_version === 'number'
+                ? data.upload_version
+                : Number(data.upload_version || 0);
+
+            const currentLastExported =
+              typeof data.last_adjustment_version_exported === 'number'
+                ? data.last_adjustment_version_exported
+                : Number(
+                    data.last_adjustment_version_exported || 0
+                  );
+
+            if (exportedVersion > currentUploadVersion) {
+              throw new Error(
+                `Exported version ${exportedVersion} is newer than current upload_version ${currentUploadVersion}`
+              );
+            }
+
+            const newLastExported = Math.max(
+              currentLastExported,
+              exportedVersion
+            );
+
+            const stillPending =
+              currentUploadVersion > newLastExported;
+
+            tx.update(docRef, {
+              last_adjustment_version_exported:
+                newLastExported,
+              adjustment_pending: stillPending
+            });
+
+            return {
+              id,
+              upload_version: exportedVersion,
+              current_upload_version:
+                currentUploadVersion,
+              last_adjustment_version_exported:
+                newLastExported,
+              adjustment_pending: stillPending
+            };
+          });
+
+          updated.push(result);
+
+        } catch (err) {
+          errors.push({
+            id,
+            error: String(err)
+          });
         }
       }
-      const success = fallbackErrors.length === 0;
-      return res.json({ success, updated: fallbackUpdated, errors: fallbackErrors });
+
+      return res.json({
+        success: errors.length === 0,
+        updated,
+        errors
+      });
+
+    } catch (err) {
+      console.error(
+        'mark-adjustments-exported error',
+        err
+      );
+
+      return res.status(500).json({
+        error: String(err)
+      });
     }
-  } catch (err) {
-    console.error('exports/mark-exported error', err);
-    return res.status(500).json({ error: String(err) });
   }
-});
+);
 
 
 
@@ -1127,14 +1196,15 @@ app.post('/sales/quality-update', requireSecret, express.json(), async (req, res
         : 0;
 
 
-    const update = {
-      quality_status: quality,
-      sales_sheet_updated_quality: qualityCode,
-      sales_sheet_quality_uploaded: false,
-      updated_by_sales_at: admin.firestore.FieldValue.serverTimestamp(),
-      conversion_value_uploaded: false,
-      upload_version: currentVersion + 1
-    };
+        const update = {
+          quality_status: quality,
+          sales_sheet_updated_quality: qualityCode,
+          sales_sheet_quality_uploaded: false,
+          updated_by_sales_at: admin.firestore.FieldValue.serverTimestamp(),
+          conversion_value_uploaded: false,
+          adjustment_pending: true,
+          upload_version: currentVersion + 1
+        };
 
 
     // if a conversion_name was explicitly provided by sales, use it for the "sales" conversion name
@@ -1180,7 +1250,8 @@ app.post('/sales/quality-update', requireSecret, express.json(), async (req, res
       upload_version: update.upload_version,
       flags: {
         base_restate_needed: true,
-        sales_sheet_quality_uploaded: false
+        sales_sheet_quality_uploaded: false,
+        adjustment_pending: true
       }
     });
   } catch (err) {
@@ -1231,6 +1302,7 @@ app.post('/queueAdjustment', requireSecret, express.json(), async (req, res) => 
         conversion_value_final: finalVal,
         conversion_value_uploaded: false,
         conversion_value_source: source,
+        adjustment_pending: true,
         upload_version: newVersion
       });
     });
