@@ -1,10 +1,11 @@
-// Adjustments Sheet Apps Script - updated to use a single global adjustments sheet
+// Adjustments Sheet Apps Script - global internal audit log + clean Google Ads adjustments feed
 // Place this script inside the dedicated adjustments Google Sheet workbook.
 
 
 // ---------------- CONFIG ----------------
 const SHEET_FILE_ID = '14__57ycyK1QciUL3r7GyNiQGYlSivSc2hqtCPG_B4E0';
 const ADJUSTMENTS_SHEET_NAME = 'Adjusted_Conversions_Sheet';
+const GOOGLE_ADS_ADJUSTMENTS_SHEET_NAME = 'Google_Ads_Adjustments_Upload';
 
 
 const PROJECT_ID = 'aida';
@@ -14,6 +15,7 @@ const MARK_BASE   = 'https://us-central1-aida-muscat-wa-tracking.cloudfunctions.
 
 const CONVERSION_NAME = 'AIDA_WA_Contact_Leads';
 const ADJUSTED_VALUE_CURRENCY = 'USD';
+const TEST_GCLID_MARKER = '_testproduction_';
 
 
 const BATCH_SIZE = 200;
@@ -54,6 +56,13 @@ function convertIsoToGoogleAdsDatetime(isoStr) {
   const d = new Date(isoStr);
   if (isNaN(d.getTime())) return isoStr;
   return formatAsGoogleAdsDatetime(d);
+}
+function normalizeStoredGoogleAdsDatetime(value) {
+  if (!value) return '';
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return formatAsGoogleAdsDatetime(value);
+  }
+  return String(value).trim();
 }
 
 
@@ -152,18 +161,22 @@ function runOnceFetchAdjustments() {
   Logger.log('Found ' + adjustments.length + ' gclid-based adjustment(s).');
 
 
-  const allAppendedItems = [];
+  const allReadyItems = [];
   for (let i = 0; i < adjustments.length; i += BATCH_SIZE) {
     const batch = adjustments.slice(i, i + BATCH_SIZE);
-    // appendAdjustmentRowsBatch now returns appended items with project included
-    const appendedItems = appendAdjustmentRowsBatch(batch);
-    if (appendedItems && appendedItems.length) {
-      allAppendedItems.push(...appendedItems);
+
+    // Returns only items whose required sheet state is safely present:
+    // - production: internal row + Google-facing row
+    // - _testproduction_: internal row only (intentionally excluded from Google feed)
+    const readyItems = appendAdjustmentRowsBatch(batch);
+
+    if (readyItems && readyItems.length) {
+      allReadyItems.push(...readyItems);
 
 
-      // group appended items by project and call mark-adjustments-exported per project
+      // group ready items by project and call mark-adjustments-exported per project
       const byProject = {};
-      appendedItems.forEach(it => {
+      readyItems.forEach(it => {
         const p = it.project || it.projectId || getProjectIdRuntime() || 'unknown';
         if (!byProject[p]) byProject[p] = [];
         byProject[p].push({ order_id: it.order_id, upload_version: it.upload_version });
@@ -174,6 +187,9 @@ function runOnceFetchAdjustments() {
         try {
           markExportedForProject(byProject[projKey], projKey);
         } catch (e) {
+          // Do not alter sheet rows on ACK failure.
+          // A later retry will detect the existing internal row, reuse its Adjustment Time,
+          // confirm/rebuild the Google-facing row, then retry the same backend ACK safely.
           Logger.log('mark-adjustments-exported failed for project=' + projKey + ' err=' + e);
         }
       }
@@ -181,16 +197,19 @@ function runOnceFetchAdjustments() {
   }
 
 
-  Logger.log('Finished. Appended adjustments for items count: ' + allAppendedItems.length);
+  Logger.log('Finished. Ready/confirmed adjustments count: ' + allReadyItems.length);
 }
 
 
-// ================ APPEND adjustments helper =================
+// ================ APPEND / CONFIRM adjustments helper =================
 function appendAdjustmentRowsBatch(rows) {
   if (!rows || rows.length === 0) return [];
 
 
   const ss = SpreadsheetApp.openById(getSheetFileIdRuntime());
+
+
+  // ---------- Internal WaTrck audit sheet ----------
   let sheet = ss.getSheetByName(ADJUSTMENTS_SHEET_NAME);
   if (!sheet) {
     sheet = ss.insertSheet(ADJUSTMENTS_SHEET_NAME);
@@ -202,22 +221,66 @@ function appendAdjustmentRowsBatch(rows) {
   }
 
 
-  const lastRow = sheet.getLastRow();
-  const existingKeys = new Set();
-  if (lastRow >= 2) {
-    // We now have 9 columns: Project ID (col1), Google Click ID (col2), Conversion Name (col3), ... Upload Version (col9)
-    const data = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
+  // Map the stable internal dedupe key to its already-stored Adjustment Time.
+  // Key: GCLID | Upload Version | Conversion Name
+  const existingInternalTimes = new Map();
+  const lastInternalRow = sheet.getLastRow();
+
+  if (lastInternalRow >= 2) {
+    const data = sheet.getRange(2, 1, lastInternalRow - 1, 9).getValues();
     for (let r = 0; r < data.length; r++) {
-      const g = data[r][1] ? String(data[r][1]).trim() : '';      // Google Click ID at index 1 (col2)
-      const conv = data[r][2] ? String(data[r][2]).trim() : '';   // Conversion Name at index 2 (col3)
-      const upv = (data[r][8] !== undefined && data[r][8] !== null) ? String(data[r][8]) : '0'; // Upload version at index 8 (col9)
-      if (g && conv) existingKeys.add(g + '|' + upv + '|' + conv);
+      const g = data[r][1] ? String(data[r][1]).trim() : '';      // Google Click ID: col2
+      const conv = data[r][2] ? String(data[r][2]).trim() : '';   // Conversion Name: col3
+      const adjTime = normalizeStoredGoogleAdsDatetime(data[r][4]); // Adjustment Time: col5
+      const upv = (data[r][8] !== undefined && data[r][8] !== null)
+        ? String(data[r][8])
+        : '0';                                                    // Upload Version: col9
+
+      if (g && conv) {
+        existingInternalTimes.set(g + '|' + upv + '|' + conv, adjTime);
+      }
     }
   }
 
 
-  const rowsToAppend = [];
-  const appendedItems = [];
+  // ---------- Clean Google Ads adjustment feed ----------
+  let googleSheet = ss.getSheetByName(GOOGLE_ADS_ADJUSTMENTS_SHEET_NAME);
+  if (!googleSheet) {
+    googleSheet = ss.insertSheet(GOOGLE_ADS_ADJUSTMENTS_SHEET_NAME, 0);
+    const googleHeaders = [
+      'Order ID',
+      'Conversion Name',
+      'Adjustment Time',
+      'Adjustment Type',
+      'Adjusted Value',
+      'Adjusted Value Currency'
+    ];
+    googleSheet.getRange(1, 1, 1, googleHeaders.length).setValues([googleHeaders]);
+  }
+
+
+  // Stable Google-facing dedupe key:
+  // Order ID | Conversion Name | Adjustment Time
+  const existingGoogleKeys = new Set();
+  const lastGoogleRow = googleSheet.getLastRow();
+
+  if (lastGoogleRow >= 2) {
+    const googleData = googleSheet.getRange(2, 1, lastGoogleRow - 1, 6).getValues();
+    for (let r = 0; r < googleData.length; r++) {
+      const orderId = googleData[r][0] ? String(googleData[r][0]).trim() : '';
+      const conv = googleData[r][1] ? String(googleData[r][1]).trim() : '';
+      const adjTime = normalizeStoredGoogleAdsDatetime(googleData[r][2]);
+
+      if (orderId && conv && adjTime) {
+        existingGoogleKeys.add(orderId + '|' + conv + '|' + adjTime);
+      }
+    }
+  }
+
+
+  const internalRowsToAppend = [];
+  const googleRowsToAppend = [];
+  const readyItems = [];
 
 
   rows.forEach(item => {
@@ -246,7 +309,6 @@ function appendAdjustmentRowsBatch(rows) {
       const convTime = rawConvTime ? convertIsoToGoogleAdsDatetime(rawConvTime) : '';
 
 
-      const adjTime = formatAsGoogleAdsDatetime(new Date());
       const adjustedValue =
         (typeof item.conversion_value_final === 'number')
           ? item.conversion_value_final
@@ -257,92 +319,209 @@ function appendAdjustmentRowsBatch(rows) {
       const projectForItem = item.project || item.projectId || getProjectIdRuntime() || '';
 
 
-        // Decide which EXISTING conversion action this adjustment belongs to.
-        //
-        // 0 = Unqualified → adjust original Contact conversion only.
-        // 1 = Qualified   → adjust Qualified conversion only.
-        // 2 = Closed      → adjust Closed conversion only.
-        //
-        // For legacy/manual adjustments with no sales quality,
-        // preserve the old behavior of targeting the base conversion.
+      // Decide which EXISTING conversion action this adjustment belongs to.
+      //
+      // 0 = Unqualified → adjust original Contact conversion only.
+      // 1 = Qualified   → adjust Qualified conversion only.
+      // 2 = Closed      → adjust Closed conversion only.
+      //
+      // For legacy/manual adjustments with no sales quality,
+      // preserve the old behavior of targeting the base conversion.
+      const qualityCode =
+        (typeof item.sales_sheet_updated_quality === 'number')
+          ? item.sales_sheet_updated_quality
+          : null;
 
-        const qualityCode =
-          (typeof item.sales_sheet_updated_quality === 'number')
-            ? item.sales_sheet_updated_quality
-            : null;
 
-        let targetConversionName = null;
+      let targetConversionName = null;
 
-        if (qualityCode === 0) {
-          // Unqualified: zero the original Contact conversion.
-          targetConversionName = convPrimary;
-        } else if (qualityCode === 1 || qualityCode === 2) {
-          // Qualified / Closed: adjust only the CURRENT sales-stage conversion.
-          targetConversionName = convSales;
-        } else {
-          // Legacy/manual adjustment fallback.
-          targetConversionName = convPrimary;
+
+      if (qualityCode === 0) {
+        // Unqualified: zero the original Contact conversion.
+        targetConversionName = convPrimary;
+      } else if (qualityCode === 1 || qualityCode === 2) {
+        // Qualified / Closed: adjust only the CURRENT sales-stage conversion.
+        targetConversionName = convSales;
+      } else {
+        // Legacy/manual adjustment fallback.
+        targetConversionName = convPrimary;
+      }
+
+
+      if (!targetConversionName) {
+        if (DEBUG) {
+          Logger.log(
+            'appendAdjustmentRowsBatch: no target conversion for order_id=%s quality=%s',
+            item.order_id || '',
+            qualityCode
+          );
         }
+        return;
+      }
 
-        if (!targetConversionName) {
-          if (DEBUG) {
-            Logger.log(
-              'appendAdjustmentRowsBatch: no target conversion for order_id=%s quality=%s',
-              item.order_id || '',
-              qualityCode
-            );
-          }
+
+      const trimmed = String(targetConversionName).trim();
+      const internalKey = gclid + '|' + uploadV + '|' + trimmed;
+
+
+      // CRITICAL RETRY RULE:
+      // If this adjustment already exists internally, reuse its exact existing Adjustment Time.
+      // If it is new, generate the time once and persist/use that same value in both sheets.
+      let adjTime = '';
+
+      if (existingInternalTimes.has(internalKey)) {
+        adjTime = existingInternalTimes.get(internalKey) || '';
+
+        if (!adjTime) {
+          Logger.log(
+            'appendAdjustmentRowsBatch: existing internal row has no Adjustment Time; not acknowledging key=%s',
+            internalKey
+          );
           return;
         }
 
-        const trimmed = String(targetConversionName).trim();
-        const key = gclid + '|' + uploadV + '|' + trimmed;
-
-        if (!existingKeys.has(key)) {
-          rowsToAppend.push([
-            projectForItem,
-            gclid,
-            trimmed,
-            convTime,
-            adjTime,
-            'RESTATE',
-            adjustedValue,
-            ADJUSTED_VALUE_CURRENCY,
-            uploadV
-          ]);
-
-          existingKeys.add(key);
-        } else if (DEBUG) {
+        if (DEBUG) {
           Logger.log(
-            'appendAdjustmentRowsBatch: skipping existing key %s',
-            key
+            'appendAdjustmentRowsBatch: reusing existing Adjustment Time for key=%s time=%s',
+            internalKey,
+            adjTime
+          );
+        }
+      } else {
+        adjTime = formatAsGoogleAdsDatetime(new Date());
+
+        internalRowsToAppend.push([
+          projectForItem,
+          gclid,
+          trimmed,
+          convTime,
+          adjTime,
+          'RESTATE',
+          adjustedValue,
+          ADJUSTED_VALUE_CURRENCY,
+          uploadV
+        ]);
+
+        // Update the in-memory map immediately so duplicate items in the same fetched batch
+        // reuse the exact same Adjustment Time and do not create a second internal row.
+        existingInternalTimes.set(internalKey, adjTime);
+      }
+
+
+      const orderId = item.order_id ? String(item.order_id).trim() : '';
+
+      // Order ID is required for safe Google-facing adjustment identity AND backend ACK.
+      // We still keep/write the internal audit row, but we deliberately leave the item pending.
+      if (!orderId) {
+        Logger.log(
+          'appendAdjustmentRowsBatch: missing order_id; internal row may be logged but item will NOT be Google-fed or acknowledged. key=%s',
+          internalKey
+        );
+        return;
+      }
+
+
+      const isTestProduction = gclid.toLowerCase().indexOf(TEST_GCLID_MARKER) !== -1;
+
+
+      if (isTestProduction) {
+        // Stress/seeding rows remain visible in the internal audit sheet but are intentionally
+        // isolated from the clean Google Ads upload feed.
+        if (DEBUG) {
+          Logger.log(
+            'appendAdjustmentRowsBatch: test GCLID isolated from Google Ads feed order_id=%s key=%s',
+            orderId,
+            internalKey
           );
         }
 
-
-      if (item.order_id) {
-        appendedItems.push({
-          order_id: String(item.order_id).trim(),
+        readyItems.push({
+          order_id: orderId,
           upload_version: uploadV,
           project: projectForItem
         });
+        return;
       }
+
+
+      const googleKey = orderId + '|' + trimmed + '|' + adjTime;
+
+
+      if (!existingGoogleKeys.has(googleKey)) {
+        googleRowsToAppend.push([
+          orderId,
+          trimmed,
+          adjTime,
+          'RESTATE',
+          adjustedValue,
+          ADJUSTED_VALUE_CURRENCY
+        ]);
+
+        // Prevent duplicates inside the same fetched batch.
+        existingGoogleKeys.add(googleKey);
+      } else if (DEBUG) {
+        Logger.log(
+          'appendAdjustmentRowsBatch: Google-facing row already exists key=%s',
+          googleKey
+        );
+      }
+
+
+      // Production items reach this point only when their internal state exists/planned
+      // and their Google-facing state exists/planned. The function does not return these
+      // items until BOTH writes have completed and SpreadsheetApp.flush() succeeds.
+      readyItems.push({
+        order_id: orderId,
+        upload_version: uploadV,
+        project: projectForItem
+      });
     } catch (inner) {
       Logger.log('appendAdjustmentRowsBatch: row processing error: ' + inner);
     }
   });
 
 
-  if (rowsToAppend.length) {
-    // write 9 columns now
-    sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAppend.length, 9).setValues(rowsToAppend);
-    if (DEBUG) Logger.log('appendAdjustmentRowsBatch: appended %d rows', rowsToAppend.length);
-  } else {
-    if (DEBUG) Logger.log('appendAdjustmentRowsBatch: nothing to append (all keys present or no valid rows).');
+  // 1) Internal audit row must exist first.
+  if (internalRowsToAppend.length) {
+    sheet
+      .getRange(sheet.getLastRow() + 1, 1, internalRowsToAppend.length, 9)
+      .setValues(internalRowsToAppend);
+
+    if (DEBUG) {
+      Logger.log(
+        'appendAdjustmentRowsBatch: appended %d internal adjustment row(s)',
+        internalRowsToAppend.length
+      );
+    }
+  } else if (DEBUG) {
+    Logger.log('appendAdjustmentRowsBatch: no new internal rows needed.');
   }
 
 
-  return appendedItems;
+  // 2) Then the clean Google Ads row must exist for real production adjustments.
+  if (googleRowsToAppend.length) {
+    googleSheet
+      .getRange(googleSheet.getLastRow() + 1, 1, googleRowsToAppend.length, 6)
+      .setValues(googleRowsToAppend);
+
+    if (DEBUG) {
+      Logger.log(
+        'appendAdjustmentRowsBatch: appended %d Google Ads adjustment row(s)',
+        googleRowsToAppend.length
+      );
+    }
+  } else if (DEBUG) {
+    Logger.log('appendAdjustmentRowsBatch: no new Google Ads rows needed.');
+  }
+
+
+  // 3) Force pending sheet writes to complete BEFORE returning anything eligible for ACK.
+  // If either setValues() or flush() throws, this function never returns readyItems,
+  // therefore the backend is not acknowledged and the retry remains safe.
+  SpreadsheetApp.flush();
+
+
+  return readyItems;
 }
 
 
@@ -481,7 +660,3 @@ function doPost(e) {
     runAdjustmentsFromScheduler()
   );
 }
-
-
-
-
