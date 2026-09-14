@@ -422,6 +422,7 @@ function appendAdjustmentRowsBatch(rows) {
 
 
       const isTestProduction = gclid.toLowerCase().indexOf(TEST_GCLID_MARKER) !== -1;
+      //const isTestProduction = false; // TEMPORARY: allow stress-test rows into Google Ads sheet
 
 
       if (isTestProduction) {
