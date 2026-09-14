@@ -504,6 +504,266 @@
 
 
   /* =========================================================
+     GOOGLE AD GROUP ID
+     ========================================================= */
+
+  function getAdGroupId(ttlHours) {
+
+    try {
+
+      var params =
+        new URLSearchParams(
+          window.location.search
+        );
+
+      var urlAdGroupId =
+        params.get(
+          "adgroup_id"
+        );
+
+
+      if (urlAdGroupId) {
+
+        try {
+
+          localStorage.setItem(
+            "wa_adgroup_id",
+            JSON.stringify({
+              id:
+                urlAdGroupId,
+              ts:
+                Date.now()
+            })
+          );
+
+        } catch (e) {}
+
+        return urlAdGroupId;
+
+      }
+
+
+      var raw =
+        localStorage.getItem(
+          "wa_adgroup_id"
+        );
+
+      if (!raw) {
+
+        return "";
+
+      }
+
+
+      var parsed;
+
+      try {
+
+        parsed =
+          JSON.parse(raw);
+
+      } catch (e) {
+
+        try {
+
+          localStorage.removeItem(
+            "wa_adgroup_id"
+          );
+
+        } catch (_) {}
+
+        return "";
+
+      }
+
+
+      if (
+        !parsed.id ||
+        !parsed.ts
+      ) {
+
+        try {
+
+          localStorage.removeItem(
+            "wa_adgroup_id"
+          );
+
+        } catch (_) {}
+
+        return "";
+
+      }
+
+
+      var ageMs =
+        Date.now() -
+        parsed.ts;
+
+      var ttlMs =
+        ttlHours *
+        60 *
+        60 *
+        1000;
+
+
+      if (ageMs <= ttlMs) {
+
+        return parsed.id;
+
+      }
+
+
+      try {
+
+        localStorage.removeItem(
+          "wa_adgroup_id"
+        );
+
+      } catch (_) {}
+
+
+      return "";
+
+    } catch (e) {
+
+      return "";
+
+    }
+
+  }
+
+
+  /* =========================================================
+     GOOGLE AD / CREATIVE ID
+     ========================================================= */
+
+  function getAdId(ttlHours) {
+
+    try {
+
+      var params =
+        new URLSearchParams(
+          window.location.search
+        );
+
+      var urlAdId =
+        params.get(
+          "ad_id"
+        );
+
+
+      if (urlAdId) {
+
+        try {
+
+          localStorage.setItem(
+            "wa_ad_id",
+            JSON.stringify({
+              id:
+                urlAdId,
+              ts:
+                Date.now()
+            })
+          );
+
+        } catch (e) {}
+
+        return urlAdId;
+
+      }
+
+
+      var raw =
+        localStorage.getItem(
+          "wa_ad_id"
+        );
+
+      if (!raw) {
+
+        return "";
+
+      }
+
+
+      var parsed;
+
+      try {
+
+        parsed =
+          JSON.parse(raw);
+
+      } catch (e) {
+
+        try {
+
+          localStorage.removeItem(
+            "wa_ad_id"
+          );
+
+        } catch (_) {}
+
+        return "";
+
+      }
+
+
+      if (
+        !parsed.id ||
+        !parsed.ts
+      ) {
+
+        try {
+
+          localStorage.removeItem(
+            "wa_ad_id"
+          );
+
+        } catch (_) {}
+
+        return "";
+
+      }
+
+
+      var ageMs =
+        Date.now() -
+        parsed.ts;
+
+      var ttlMs =
+        ttlHours *
+        60 *
+        60 *
+        1000;
+
+
+      if (ageMs <= ttlMs) {
+
+        return parsed.id;
+
+      }
+
+
+      try {
+
+        localStorage.removeItem(
+          "wa_ad_id"
+        );
+
+      } catch (_) {}
+
+
+      return "";
+
+    } catch (e) {
+
+      return "";
+
+    }
+
+  }
+
+
+  /* =========================================================
      PAGE
      ========================================================= */
 
@@ -677,6 +937,14 @@
     ATTRIBUTION_TTL_HOURS
   );
 
+  getAdGroupId(
+    ATTRIBUTION_TTL_HOURS
+  );
+
+  getAdId(
+    ATTRIBUTION_TTL_HOURS
+  );
+
 
   /* =========================================================
      EXISTING WHATSAPP CLICK HANDLER + WATRCK
@@ -761,6 +1029,19 @@
         ) ||
         "";
 
+      var adGroupId =
+        getAdGroupId(
+          ATTRIBUTION_TTL_HOURS
+        ) ||
+        "";
+
+
+      var adId =
+        getAdId(
+          ATTRIBUTION_TTL_HOURS
+        ) ||
+        "";
+
 
       var ctaId =
         cta.getAttribute(
@@ -780,6 +1061,12 @@
 
         campaign_id:
           campaignId,
+
+        adgroup_id:
+          adGroupId,
+
+        ad_id:
+          adId,
 
         ts:
           new Date()

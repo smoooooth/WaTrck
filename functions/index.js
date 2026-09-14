@@ -148,6 +148,8 @@ exports.saveToken = functions.https.onRequest(async (req, res) => {
         : null;
     const usedFlag = body.used === true;
     const campaignId = (body.campaign_id && String(body.campaign_id)) || null;
+    const adGroupId = (body.adgroup_id && String(body.adgroup_id)) || null;
+    const adId = (body.ad_id && String(body.ad_id)) || null;
 
     const clickRef = db.doc(`projects/${projectId}/clicks/${token}`);
 
