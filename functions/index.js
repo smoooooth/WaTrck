@@ -22,7 +22,7 @@ Managed by gcloud functions deploy
 
 // functions/index.js
 const functions = require('firebase-functions');
-const { onRequest } = require('firebase-functions/v2/https');
+
 const admin = require('firebase-admin');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');
 const express = require('express');
@@ -2175,165 +2175,52 @@ ttlMinutes:
 
   // ================= HTTP ENDPOINT =================
 
-    exports.cleanupFirestoreHttp =
-      onRequest(
-        {
-          region: 'us-central1',
-          timeoutSeconds: 540,
-          memory: '256MiB'
-        },
-        async (
-          req,
-          res
-        ) => {
+exports.cleanupFirestoreHttp = functions.https.onRequest(
+  async (req, res) => {
+    try {
+      // Old/simple behavior:
+      // CLEANUP_DRY_RUN is the default,
+      // but ?dryRun=true or ?dryRun=false can override it.
 
-          try {
+      let dryRun = CLEANUP_DRY_RUN;
 
-            /*
-             * Only GET/POST are accepted.
-             */
-            if (
-              req.method !== 'GET' &&
-              req.method !== 'POST'
-            ) {
-              return res
-                .status(405)
-                .json({
-                  ok: false,
-                  error:
-                    'Method not allowed'
-                });
-            }
+      const q = req.query || {};
+      const b = req.body || {};
 
+      if (typeof q.dryRun !== 'undefined') {
+        dryRun = String(q.dryRun) !== 'false';
+      } else if (typeof b.dryRun !== 'undefined') {
+        dryRun =
+          b.dryRun !== false &&
+          String(b.dryRun) !== 'false';
+      }
 
-            /*
-             * Protect the destructive cleanup endpoint
-             * with the SAME export secret already used
-             * by the Sheets/backend pipeline.
-             *
-             * Cloud Scheduler must send:
-             *
-             * x-export-secret: <EXPORT_SECRET>
-             */
-            const suppliedSecret =
-              String(
-                req.get(
-                  'x-export-secret'
-                ) || ''
-              );
+      const result = await runCleanupLogic({
+        dryRun
+      });
 
-            const expectedSecret =
-              String(
-                await getExportSecret()
-              );
+      return res.status(200).json({
+        ok: true,
+        result
+      });
 
-
-            if (
-              !suppliedSecret ||
-              suppliedSecret !==
-                expectedSecret
-            ) {
-              return res
-                .status(403)
-                .json({
-                  ok: false,
-                  error:
-                    'Forbidden'
-                });
-            }
-
-
-            /*
-             * Default comes from CLEANUP_DRY_RUN.
-             *
-             * Authenticated callers may explicitly use:
-             *
-             * ?dryRun=true
-             * ?dryRun=false
-             */
-            let dryRun =
-              CLEANUP_DRY_RUN;
-
-
-            if (
-              typeof
-                req.query.dryRun !==
-              'undefined'
-            ) {
-
-              const raw =
-                String(
-                  req.query.dryRun
-                )
-                  .trim()
-                  .toLowerCase();
-
-
-              if (
-                raw !== 'true' &&
-                raw !== 'false'
-              ) {
-                return res
-                  .status(400)
-                  .json({
-                    ok: false,
-                    error:
-                      'dryRun must be true or false'
-                  });
-              }
-
-
-              dryRun =
-                raw === 'true';
-            }
-
-
-            const result =
-              await runCleanupLogic({
-                dryRun
-              });
-
-
-            return res
-              .status(200)
-              .json({
-                ok: true,
-                result
-              });
-
-
-          } catch (error) {
-
-            console.error(
-              'cleanupFirestoreHttp error:',
-              error &&
-              error.stack
-                ? error.stack
-                : error
-            );
-
-
-            return res
-              .status(500)
-              .json({
-                ok: false,
-                error:
-                  String(
-                    error &&
-                    (
-                      error.message ||
-                      error
-                    )
-                  )
-              });
-          }
-        }
+    } catch (err) {
+      console.error(
+        'cleanupFirestoreHttp error:',
+        err && err.stack ? err.stack : err
       );
 
+      return res.status(500).json({
+        ok: false,
+        error: String(err)
+      });
+    }
+  }
+);
 
-  console.log(
-    'cleanupFirestoreHttp registered (production-safe)'
-  );
+console.log(
+  'cleanupFirestoreHttp registered (simple HTTP)'
+);
 
 })();
 // ---------- end production cleanup ----------
