@@ -1548,10 +1548,11 @@ every day(24h): 0 0 * *
 
   // ================= CONFIG =================
 
-const UNUSED_TTL_MINUTES = 5;
+const UNUSED_TTL_HOURS = 24;
 
 const UNUSED_TTL_MS =
-  UNUSED_TTL_MINUTES *
+  UNUSED_TTL_HOURS *
+  60 *
   60 *
   1000;
 
@@ -1860,7 +1861,7 @@ const UNUSED_TTL_MS =
 
     console.log(
       '[CLEANUP] Unused TTL hours:',
-      UNUSED_TTL_MINUTES
+      UNUSED_TTL_HOURS
     );
 
     console.log(
@@ -2110,8 +2111,8 @@ const UNUSED_TTL_MS =
     const summary = {
       dryRun,
 
-ttlMinutes:
-  UNUSED_TTL_MINUTES,
+ttlHours:
+  UNUSED_TTL_HOURS,
 
       unusedDocsScanned:
         snapshot.size,
