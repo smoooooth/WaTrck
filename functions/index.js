@@ -755,7 +755,118 @@ app.get('/exports/pending', requireSecret, async (req, res) => {
 
 
 
+// POST /exports/mark-exported?project=<project>&secret=<secret>
+// Body: { order_ids: ['A','B'] }
+// Marks conversion_value_uploaded = true and clears the current sales export trigger.
+app.post('/exports/mark-exported', requireSecret, express.json(), async (req, res) => {
+  try {
+    const project = req.query.project;
 
+    if (!project) {
+      return res.status(400).json({ error: 'Missing project' });
+    }
+
+    const orderIds =
+      req.body && Array.isArray(req.body.order_ids)
+        ? req.body.order_ids
+        : [];
+
+    if (!orderIds.length) {
+      return res.status(400).json({ error: 'No order_ids provided' });
+    }
+
+    const basePath = `projects/${project}/clicks`;
+    const batch = db.batch();
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const updated = [];
+
+    for (const id of orderIds) {
+      const docRef = db.doc(`${basePath}/${id}`);
+
+      batch.update(docRef, {
+        conversion_value_uploaded: true,
+        conversion_value_uploaded_at: now,
+        google_sheet_exported: true,
+        google_sheet_export_job: `apps-script-${Date.now()}`,
+        exported_once: true,
+        sales_sheet_quality_uploaded: true,
+        sales_sheet_last_uploaded_at: now
+      });
+
+      updated.push(id);
+    }
+
+    try {
+      await batch.commit();
+
+      console.log(
+        `mark-exported: batch commit success for project=${project} count=${updated.length}`
+      );
+
+      return res.json({
+        success: true,
+        updated,
+        errors: []
+      });
+
+    } catch (batchErr) {
+      console.error(
+        'mark-exported: batch commit failed, falling back to per-doc updates',
+        batchErr
+      );
+
+      const fallbackUpdated = [];
+      const fallbackErrors = [];
+
+      for (const id of orderIds) {
+        const docRef = db.doc(`${basePath}/${id}`);
+
+        try {
+          await docRef.update({
+            conversion_value_uploaded: true,
+            conversion_value_uploaded_at:
+              admin.firestore.FieldValue.serverTimestamp(),
+            google_sheet_exported: true,
+            google_sheet_export_job: `apps-script-${Date.now()}`,
+            exported_once: true,
+            sales_sheet_quality_uploaded: true,
+            sales_sheet_last_uploaded_at:
+              admin.firestore.FieldValue.serverTimestamp()
+          });
+
+          fallbackUpdated.push(id);
+
+        } catch (e) {
+          fallbackErrors.push({
+            id,
+            error: String(e)
+          });
+
+          console.error(
+            'mark-exported single update error',
+            id,
+            e
+          );
+        }
+      }
+
+      const success = fallbackErrors.length === 0;
+
+      return res.json({
+        success,
+        updated: fallbackUpdated,
+        errors: fallbackErrors
+      });
+    }
+
+  } catch (err) {
+    console.error('exports/mark-exported error', err);
+
+    return res.status(500).json({
+      error: String(err)
+    });
+  }
+});
 
 
 
