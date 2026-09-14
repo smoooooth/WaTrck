@@ -44,10 +44,8 @@
   </svg>
 </button>
 
-
 <script>
 (function () {
-
   /* =========================================================
      PROJECT CONFIG — CHANGE THESE FOR EVERY NEW PROJECT
      ========================================================= */
@@ -57,37 +55,29 @@
 
   var PROJECT_ID = "Padel Living Res";
 
-  var WHATSAPP_CONVERSION_NAME =
-    "Padel_Living-ws-contact";
+  var WHATSAPP_CONVERSION_NAME = "Padel_Living-ws-contact";
 
   var LEAD_VALUE_ESTIMATE = 70;
-
 
   /* Direct Google Ads conversion fired on WhatsApp click */
   var LEGACY_GOOGLE_ADS_SEND_TO =
     "AW-18357797105/Ss89CN3rvtgcEPGB17FE";
 
-
   /* Direct Google Ads conversion fired after successful form */
   var LEGACY_LEAD_FORM_GOOGLE_ADS_SEND_TO =
     "AW-18357797105/mGDVCOWMutgcEPGB17FE";
-
 
   /* =========================================================
      GLOBAL / SYSTEM CONFIG — NORMALLY DO NOT CHANGE
      ========================================================= */
 
-  var DEFAULT_PHONE =
-    "+201034285454";
-
+  var DEFAULT_PHONE = "+201034285454";
   var SAVE_TOKEN_ENDPOINT =
     "https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/saveToken";
-
   var ATTRIBUTION_TTL_HOURS = 24;
 
   // Keep this true while staging.
   var WATRCK_DEBUG = true;
-
 
   /* =========================================================
      EXISTING WEBFLOW FORM SUCCESS TRACKING
@@ -97,175 +87,97 @@
   /* leafo success */
 
   function handleSuccessMessage(e) {
-
     "block" === window.getComputedStyle(e).display &&
-    !e.hasAttribute("data-conversion-tracked") &&
-    (
-      gtag("event", "conversion", {
-        send_to:
-          LEGACY_LEAD_FORM_GOOGLE_ADS_SEND_TO
-      }),
-
-      e.setAttribute(
-        "data-conversion-tracked",
-        "true"
-      )
-    );
-
+      !e.hasAttribute("data-conversion-tracked") &&
+      (
+        gtag("event", "conversion", {
+          send_to: LEGACY_LEAD_FORM_GOOGLE_ADS_SEND_TO
+        }),
+        e.setAttribute("data-conversion-tracked", "true")
+      );
   }
 
+  document.addEventListener("DOMContentLoaded", (function () {
+    const e = new MutationObserver((function (e) {
+      e.forEach((function (e) {
+        if (
+          "attributes" === e.type &&
+          "style" === e.attributeName
+        ) {
+          const s = e.target;
 
-  document.addEventListener(
-    "DOMContentLoaded",
-    (function () {
-
-      const e =
-        new MutationObserver(
-          (function (e) {
-
-            e.forEach(
-              (function (e) {
-
-                if (
-                  "attributes" === e.type &&
-                  "style" === e.attributeName
-                ) {
-
-                  const s = e.target;
-
-                  s.classList.contains(
-                    "success-message"
-                  ) &&
-                  s.classList.contains(
-                    "w-form-done"
-                  ) &&
-                  handleSuccessMessage(s);
-
-                }
-
-
-                "childList" === e.type &&
-                e.addedNodes.forEach(
-                  (function (e) {
-
-                    1 === e.nodeType &&
-                    e.classList &&
-                    e.classList.contains(
-                      "success-message"
-                    ) &&
-                    e.classList.contains(
-                      "w-form-done"
-                    ) &&
-                    (
-                      s(e),
-                      handleSuccessMessage(e)
-                    );
-
-                  })
-                );
-
-              })
-            );
-
-          })
-        );
-
-
-      function s(s) {
-
-        e.observe(s, {
-          attributes: !0,
-          attributeFilter: ["style"]
-        });
-
-      }
-
-
-      document
-        .querySelectorAll(
-          ".success-message.w-form-done"
-        )
-        .forEach(
-          (function (e) {
-
-            s(e),
-            handleSuccessMessage(e);
-
-          })
-        );
-
-
-      e.observe(
-        document.body,
-        {
-          childList: !0,
-          subtree: !0
+          s.classList.contains("success-message") &&
+            s.classList.contains("w-form-done") &&
+            handleSuccessMessage(s);
         }
-      );
 
-    })
-  );
+        "childList" === e.type &&
+          e.addedNodes.forEach((function (e) {
+            1 === e.nodeType &&
+              e.classList &&
+              e.classList.contains("success-message") &&
+              e.classList.contains("w-form-done") &&
+              (
+                s(e),
+                handleSuccessMessage(e)
+              );
+          }));
+      }));
+    }));
 
+    function s(s) {
+      e.observe(s, {
+        attributes: !0,
+        attributeFilter: ["style"]
+      });
+    }
+
+    document
+      .querySelectorAll(".success-message.w-form-done")
+      .forEach((function (e) {
+        s(e),
+        handleSuccessMessage(e);
+      }));
+
+    e.observe(document.body, {
+      childList: !0,
+      subtree: !0
+    });
+  }));
 
   /* =========================================================
      TOKEN
      ========================================================= */
 
   function generateToken(len) {
-
     len = len || 7;
 
-    var chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
+    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     var output = "";
-
-    var randomValues =
-      crypto.getRandomValues(
-        new Uint8Array(len)
-      );
+    var randomValues = crypto.getRandomValues(new Uint8Array(len));
 
     for (var i = 0; i < len; i++) {
-
-      output +=
-        chars[
-          randomValues[i] %
-          chars.length
-        ];
-
+      output += chars[randomValues[i] % chars.length];
     }
 
     return output;
-
   }
-
 
   /* =========================================================
      GCLID
      ========================================================= */
 
   function getGclid(ttlHours) {
-
     try {
-
-      var params =
-        new URLSearchParams(
-          window.location.search
-        );
-
-      var urlGclid =
-        params.get("gclid");
-
+      var params = new URLSearchParams(window.location.search);
+      var urlGclid = params.get("gclid");
 
       /*
        * If a GCLID exists in the URL,
        * store it for later use.
        */
-
       if (urlGclid) {
-
         try {
-
           localStorage.setItem(
             "wa_gclid",
             JSON.stringify({
@@ -273,302 +185,284 @@
               ts: Date.now()
             })
           );
-
         } catch (e) {}
 
         return urlGclid;
-
       }
-
 
       /*
        * Otherwise check localStorage.
        */
-
-      var raw =
-        localStorage.getItem(
-          "wa_gclid"
-        );
+      var raw = localStorage.getItem("wa_gclid");
 
       if (!raw) {
         return "";
       }
 
-
       var parsed;
 
       try {
-
-        parsed =
-          JSON.parse(raw);
-
+        parsed = JSON.parse(raw);
       } catch (e) {
-
         try {
-
-          localStorage.removeItem(
-            "wa_gclid"
-          );
-
+          localStorage.removeItem("wa_gclid");
         } catch (_) {}
 
         return "";
-
       }
 
-
-      if (
-        !parsed.gclid ||
-        !parsed.ts
-      ) {
-
+      if (!parsed.gclid || !parsed.ts) {
         try {
-
-          localStorage.removeItem(
-            "wa_gclid"
-          );
-
+          localStorage.removeItem("wa_gclid");
         } catch (_) {}
 
         return "";
-
       }
 
-
-      var ageMs =
-        Date.now() -
-        parsed.ts;
-
-      var ttlMs =
-        ttlHours *
-        60 *
-        60 *
-        1000;
-
+      var ageMs = Date.now() - parsed.ts;
+      var ttlMs = ttlHours * 60 * 60 * 1000;
 
       if (ageMs <= ttlMs) {
-
         return parsed.gclid;
-
       }
 
-
       try {
-
-        localStorage.removeItem(
-          "wa_gclid"
-        );
-
+        localStorage.removeItem("wa_gclid");
       } catch (_) {}
 
-
       return "";
-
     } catch (e) {
-
       return "";
-
     }
-
   }
-
 
   /* =========================================================
      GOOGLE CAMPAIGN ID
      ========================================================= */
 
   function getCampaignId(ttlHours) {
-
     try {
-
-      var params =
-        new URLSearchParams(
-          window.location.search
-        );
-
-      var urlCampaignId =
-        params.get(
-          "campaign_id"
-        );
-
+      var params = new URLSearchParams(window.location.search);
+      var urlCampaignId = params.get("campaign_id");
 
       if (urlCampaignId) {
-
         try {
-
           localStorage.setItem(
             "wa_campaign_id",
             JSON.stringify({
-              cid:
-                urlCampaignId,
-              ts:
-                Date.now()
+              cid: urlCampaignId,
+              ts: Date.now()
             })
           );
-
         } catch (e) {}
 
         return urlCampaignId;
-
       }
 
-
-      var raw =
-        localStorage.getItem(
-          "wa_campaign_id"
-        );
+      var raw = localStorage.getItem("wa_campaign_id");
 
       if (!raw) {
-
         return "";
-
       }
-
 
       var parsed;
 
       try {
-
-        parsed =
-          JSON.parse(raw);
-
+        parsed = JSON.parse(raw);
       } catch (e) {
-
         try {
-
-          localStorage.removeItem(
-            "wa_campaign_id"
-          );
-
+          localStorage.removeItem("wa_campaign_id");
         } catch (_) {}
 
         return "";
-
       }
 
-
-      if (
-        !parsed.cid ||
-        !parsed.ts
-      ) {
-
+      if (!parsed.cid || !parsed.ts) {
         try {
-
-          localStorage.removeItem(
-            "wa_campaign_id"
-          );
-
+          localStorage.removeItem("wa_campaign_id");
         } catch (_) {}
 
         return "";
-
       }
 
-
-      var ageMs =
-        Date.now() -
-        parsed.ts;
-
-      var ttlMs =
-        ttlHours *
-        60 *
-        60 *
-        1000;
-
+      var ageMs = Date.now() - parsed.ts;
+      var ttlMs = ttlHours * 60 * 60 * 1000;
 
       if (ageMs <= ttlMs) {
-
         return parsed.cid;
-
       }
 
-
       try {
-
-        localStorage.removeItem(
-          "wa_campaign_id"
-        );
-
+        localStorage.removeItem("wa_campaign_id");
       } catch (_) {}
 
-
       return "";
-
     } catch (e) {
-
       return "";
-
     }
-
   }
 
+  /* =========================================================
+     GOOGLE AD GROUP ID
+     ========================================================= */
+
+  function getAdGroupId(ttlHours) {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var urlAdGroupId = params.get("adgroup_id");
+
+      if (urlAdGroupId) {
+        try {
+          localStorage.setItem(
+            "wa_adgroup_id",
+            JSON.stringify({
+              id: urlAdGroupId,
+              ts: Date.now()
+            })
+          );
+        } catch (e) {}
+
+        return urlAdGroupId;
+      }
+
+      var raw = localStorage.getItem("wa_adgroup_id");
+
+      if (!raw) {
+        return "";
+      }
+
+      var parsed;
+
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        try {
+          localStorage.removeItem("wa_adgroup_id");
+        } catch (_) {}
+
+        return "";
+      }
+
+      if (!parsed.id || !parsed.ts) {
+        try {
+          localStorage.removeItem("wa_adgroup_id");
+        } catch (_) {}
+
+        return "";
+      }
+
+      var ageMs = Date.now() - parsed.ts;
+      var ttlMs = ttlHours * 60 * 60 * 1000;
+
+      if (ageMs <= ttlMs) {
+        return parsed.id;
+      }
+
+      try {
+        localStorage.removeItem("wa_adgroup_id");
+      } catch (_) {}
+
+      return "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  /* =========================================================
+     GOOGLE AD / CREATIVE ID
+     ========================================================= */
+
+  function getAdId(ttlHours) {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var urlAdId = params.get("ad_id");
+
+      if (urlAdId) {
+        try {
+          localStorage.setItem(
+            "wa_ad_id",
+            JSON.stringify({
+              id: urlAdId,
+              ts: Date.now()
+            })
+          );
+        } catch (e) {}
+
+        return urlAdId;
+      }
+
+      var raw = localStorage.getItem("wa_ad_id");
+
+      if (!raw) {
+        return "";
+      }
+
+      var parsed;
+
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        try {
+          localStorage.removeItem("wa_ad_id");
+        } catch (_) {}
+
+        return "";
+      }
+
+      if (!parsed.id || !parsed.ts) {
+        try {
+          localStorage.removeItem("wa_ad_id");
+        } catch (_) {}
+
+        return "";
+      }
+
+      var ageMs = Date.now() - parsed.ts;
+      var ttlMs = ttlHours * 60 * 60 * 1000;
+
+      if (ageMs <= ttlMs) {
+        return parsed.id;
+      }
+
+      try {
+        localStorage.removeItem("wa_ad_id");
+      } catch (_) {}
+
+      return "";
+    } catch (e) {
+      return "";
+    }
+  }
 
   /* =========================================================
      PAGE
      ========================================================= */
 
   function getCanonicalPage() {
-
     try {
+      var host = window.location.hostname.toLowerCase();
 
-      var host =
-        window.location
-          .hostname
-          .toLowerCase();
-
-
-      if (
-        host.indexOf(
-          "www."
-        ) === 0
-      ) {
-
-        host =
-          host.substring(4);
-
+      if (host.indexOf("www.") === 0) {
+        host = host.substring(4);
       }
 
+      var path = window.location.pathname || "/";
 
-      var path =
-        window.location.pathname ||
-        "/";
-
-
-      if (
-        path !== "/" &&
-        path.charAt(
-          path.length - 1
-        ) === "/"
-      ) {
-
-        path =
-          path.substring(
-            0,
-            path.length - 1
-          );
-
+      if (path !== "/" && path.charAt(path.length - 1) === "/") {
+        path = path.substring(0, path.length - 1);
       }
 
-
-      return (
-        host + path
-      ).toLowerCase();
-
+      return (host + path).toLowerCase();
     } catch (e) {
-
       return "";
-
     }
-
   }
-
 
   /* =========================================================
      SAVE WATRCK CLICK
      ========================================================= */
 
   function saveWaTrckClick(payload) {
-
     /*
      * IMPORTANT:
      *
@@ -578,82 +472,32 @@
      * Your existing WhatsApp behavior therefore remains fast,
      * and browser popup blocking is not introduced.
      */
-
-    fetch(
-      SAVE_TOKEN_ENDPOINT,
-      {
-
-        method:
-          "POST",
-
-        mode:
-          "cors",
-
-        credentials:
-          "omit",
-
-        headers: {
-          "Content-Type":
-            "application/json"
-        },
-
-        body:
-          JSON.stringify(
-            payload
-          ),
-
-        keepalive:
-          true
-
-      }
-    )
-    .then(
-      function (response) {
-
-        if (
-          WATRCK_DEBUG
-        ) {
-
-          console.log(
-            "[WaTrck] saveToken HTTP:",
-            response.status
-          );
-
+    fetch(SAVE_TOKEN_ENDPOINT, {
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      keepalive: true
+    })
+      .then(function (response) {
+        if (WATRCK_DEBUG) {
+          console.log("[WaTrck] saveToken HTTP:", response.status);
         }
 
         return response.text();
-
-      }
-    )
-    .then(
-      function (body) {
-
-        if (
-          WATRCK_DEBUG
-        ) {
-
-          console.log(
-            "[WaTrck] saveToken response:",
-            body
-          );
-
+      })
+      .then(function (body) {
+        if (WATRCK_DEBUG) {
+          console.log("[WaTrck] saveToken response:", body);
         }
-
-      }
-    )
-    .catch(
-      function (error) {
-
-        console.error(
-          "[WaTrck] saveToken failed:",
-          error
-        );
-
-      }
-    );
-
+      })
+      .catch(function (error) {
+        console.error("[WaTrck] saveToken failed:", error);
+      });
   }
-
 
   /* =========================================================
      CAPTURE ATTRIBUTION AS SOON AS PAGE LOADS
@@ -668,225 +512,112 @@
    * the values are stored immediately instead of waiting
    * until the WhatsApp button is clicked.
    */
-
-  getGclid(
-    ATTRIBUTION_TTL_HOURS
-  );
-
-  getCampaignId(
-    ATTRIBUTION_TTL_HOURS
-  );
-
+  getGclid(ATTRIBUTION_TTL_HOURS);
+  getCampaignId(ATTRIBUTION_TTL_HOURS);
+  getAdGroupId(ATTRIBUTION_TTL_HOURS);
+  getAdId(ATTRIBUTION_TTL_HOURS);
 
   /* =========================================================
      EXISTING WHATSAPP CLICK HANDLER + WATRCK
      ========================================================= */
 
-  document.addEventListener(
-    "click",
-    function (e) {
-
-      var cta =
-        e.target.closest(
-          ".custom_action_cta"
-        );
-
-
-      if (!cta) {
-
-        return;
-
-      }
-
-
-      e.preventDefault();
-
-
-      /* ---------------------------------------------------------
-         EXISTING CTA DATA
-         --------------------------------------------------------- */
-
-      var rawPhone =
-        cta.getAttribute(
-          "data-wa-phone"
-        ) ||
-        DEFAULT_PHONE;
-
-
-      /*
-       * One project-wide default message.
-       * Individual CTAs can still optionally override this
-       * by using data-wa-message.
-       */
-
-      var message =
-        cta.getAttribute(
-          "data-wa-message"
-        ) ||
-        DEFAULT_MESSAGE;
-
-
-      if (!rawPhone) {
-
-        return;
-
-      }
-
-
-      var phone =
-        rawPhone.replace(
-          /[^0-9]/g,
-          ""
-        );
-
-
-      /* ---------------------------------------------------------
-         NEW WATRCK DATA
-         --------------------------------------------------------- */
-
-      var token =
-        generateToken(7);
-
-
-      var gclid =
-        getGclid(
-          ATTRIBUTION_TTL_HOURS
-        ) ||
-        "";
-
-
-      var campaignId =
-        getCampaignId(
-          ATTRIBUTION_TTL_HOURS
-        ) ||
-        "";
-
-
-      var ctaId =
-        cta.getAttribute(
-          "data-wa-cta-id"
-        ) ||
-        cta.id ||
-        "custom_action_cta";
-
-
-      var payload = {
-
-        token:
-          token,
-
-        gclid:
-          gclid,
-
-        campaign_id:
-          campaignId,
-
-        ts:
-          new Date()
-            .toISOString(),
-
-        page:
-          getCanonicalPage(),
-
-        projectId:
-          PROJECT_ID,
-
-        ctaId:
-          ctaId,
-
-        lead_value_estimate:
-          LEAD_VALUE_ESTIMATE,
-
-        conversion_name:
-          WHATSAPP_CONVERSION_NAME,
-
-        used:
-          false
-
-      };
-
-
-      if (
-        WATRCK_DEBUG
-      ) {
-
-        console.log(
-          "[WaTrck] outbound click payload:",
-          payload
-        );
-
-      }
-
-
-      /*
-       * Send WaTrck record to Firebase.
-       *
-       * Fire-and-forget so WhatsApp opening remains immediate.
-       */
-
-      saveWaTrckClick(
-        payload
-      );
-
-
-      /* ---------------------------------------------------------
-         ADD TOKEN TO WHATSAPP MESSAGE
-         --------------------------------------------------------- */
-
-      var messageWithToken =
-        message
-          ?
-          message +
-          " Ref: #" +
-          token
-          :
-          "Ref: #" +
-          token;
-
-
-      var url =
-        "https://api.whatsapp.com/send?phone=" +
-        phone +
-        "&text=" +
-        encodeURIComponent(
-          messageWithToken
-        );
-
-
-      /* ---------------------------------------------------------
-         EXISTING GOOGLE ADS WHATSAPP TRACKING
-         --------------------------------------------------------- */
-
-      if (
-        typeof gtag ===
-        "function"
-      ) {
-
-        gtag(
-          "event",
-          "conversion",
-          {
-
-            "send_to":
-              LEGACY_GOOGLE_ADS_SEND_TO
-
-          }
-        );
-
-      }
-
-
-      /* ---------------------------------------------------------
-         EXISTING WHATSAPP OPEN
-         --------------------------------------------------------- */
-
-      window.open(
-        url,
-        "_blank"
-      );
-
+  document.addEventListener("click", function (e) {
+    var cta = e.target.closest(".custom_action_cta");
+
+    if (!cta) {
+      return;
     }
-  );
 
+    e.preventDefault();
+
+    /* ---------------------------------------------------------
+       EXISTING CTA DATA
+       --------------------------------------------------------- */
+
+    var rawPhone = cta.getAttribute("data-wa-phone") || DEFAULT_PHONE;
+
+    /*
+     * One project-wide default message.
+     * Individual CTAs can still optionally override this
+     * by using data-wa-message.
+     */
+    var message = cta.getAttribute("data-wa-message") || DEFAULT_MESSAGE;
+
+    if (!rawPhone) {
+      return;
+    }
+
+    var phone = rawPhone.replace(/[^0-9]/g, "");
+
+    /* ---------------------------------------------------------
+       NEW WATRCK DATA
+       --------------------------------------------------------- */
+
+    var token = generateToken(7);
+    var gclid = getGclid(ATTRIBUTION_TTL_HOURS) || "";
+    var campaignId = getCampaignId(ATTRIBUTION_TTL_HOURS) || "";
+    var adGroupId = getAdGroupId(ATTRIBUTION_TTL_HOURS) || "";
+    var adId = getAdId(ATTRIBUTION_TTL_HOURS) || "";
+    var ctaId =
+      cta.getAttribute("data-wa-cta-id") ||
+      cta.id ||
+      "custom_action_cta";
+
+    var payload = {
+      token: token,
+      gclid: gclid,
+      campaign_id: campaignId,
+      adgroup_id: adGroupId,
+      ad_id: adId,
+      ts: new Date().toISOString(),
+      page: getCanonicalPage(),
+      projectId: PROJECT_ID,
+      ctaId: ctaId,
+      lead_value_estimate: LEAD_VALUE_ESTIMATE,
+      conversion_name: WHATSAPP_CONVERSION_NAME,
+      used: false
+    };
+
+    if (WATRCK_DEBUG) {
+      console.log("[WaTrck] outbound click payload:", payload);
+    }
+
+    /*
+     * Send WaTrck record to Firebase.
+     *
+     * Fire-and-forget so WhatsApp opening remains immediate.
+     */
+    saveWaTrckClick(payload);
+
+    /* ---------------------------------------------------------
+       ADD TOKEN TO WHATSAPP MESSAGE
+       --------------------------------------------------------- */
+
+    var messageWithToken = message
+      ? message + " Ref: #" + token
+      : "Ref: #" + token;
+
+    var url =
+      "https://api.whatsapp.com/send?phone=" +
+      phone +
+      "&text=" +
+      encodeURIComponent(messageWithToken);
+
+    /* ---------------------------------------------------------
+       EXISTING GOOGLE ADS WHATSAPP TRACKING
+       --------------------------------------------------------- */
+
+    if (typeof gtag === "function") {
+      gtag("event", "conversion", {
+        "send_to": LEGACY_GOOGLE_ADS_SEND_TO
+      });
+    }
+
+    /* ---------------------------------------------------------
+       EXISTING WHATSAPP OPEN
+       --------------------------------------------------------- */
+
+    window.open(url, "_blank");
+  });
 })();
 </script>

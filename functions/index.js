@@ -170,7 +170,9 @@ exports.saveToken = functions.https.onRequest(async (req, res) => {
       conversion_value_source: null,
       upload_version: 0,
       adjustment_pending: false,
-      google_campaign_id: campaignId
+      google_campaign_id: campaignId,
+      google_adgroup_id: adGroupId,
+      google_ad_id: adId
     };
 
     if (usedFlag) {
