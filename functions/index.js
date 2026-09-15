@@ -1,9 +1,4 @@
-
-
-
-
 /**
-issue: doesnt fetch all conversions to google sheet, stops on second project, but fetchs all first project convs.
 Firebase-managed functions
 saveToken
 exportsApi
@@ -12,12 +7,11 @@ cleanupFirestoreHttp
 Managed by firebase deploy
 
 
-
 gcloud-managed function
 exportConversionsToSheet
 Managed by gcloud functions deploy
 
- */
+*/
 
 
 // functions/index.js
