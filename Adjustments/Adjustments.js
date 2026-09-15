@@ -49,7 +49,7 @@ function formatAsGoogleAdsDatetime(d) {
   const hh = pad2(d.getUTCHours());
   const mi = pad2(d.getUTCMinutes());
   const ss = pad2(d.getUTCSeconds());
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}+00:00`;
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}+0000`;
 }
 function convertIsoToGoogleAdsDatetime(isoStr) {
   if (!isoStr) return formatAsGoogleAdsDatetime(new Date());
