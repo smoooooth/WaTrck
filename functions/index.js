@@ -1643,7 +1643,7 @@ every day(24h): 0 0 * *
    *
    *   used === false
    *   AND
-   *   age >= 24 hours
+   *   age >= 7 days
    *
    * NEVER automatically delete:
    * - used === true conversions
@@ -1657,7 +1657,7 @@ every day(24h): 0 0 * *
 
   // ================= CONFIG =================
 
-const UNUSED_TTL_HOURS = 24;
+    const UNUSED_TTL_HOURS = 168;
 
 const UNUSED_TTL_MS =
   UNUSED_TTL_HOURS *
