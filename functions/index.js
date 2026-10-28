@@ -1184,7 +1184,7 @@ app.post(
 
 /**
  * POST /sales/quality-update?secret=<secret>
- * Body: { token: 'ABC1234', quality: 'qualified'|'unqualified'|'closed', value?: number, conversion_name?: 'Qualified Conversion Name' }
+ * Body: { token: 'ABC1234', quality: 'qualified'|'unqualified'|'closed', value: number, conversion_name?: 'Qualified Conversion Name' }
  * Updates sales fields on the click doc and triggers exporter via flags.
  */
 // POST /sales/quality-update?secret=<secret>
@@ -1223,6 +1223,15 @@ app.post('/sales/quality-update', requireSecret, express.json(), async (req, res
       }
     }
 
+
+    // Unqualified requires an explicit non-negative value; never default to zero.
+    if (quality === 'unqualified') {
+      valueNum = ((typeof rawValue === 'number' || typeof rawValue === 'string') &&
+                  String(rawValue).trim() !== '') ? Number(rawValue) : null;
+      if (!Number.isFinite(valueNum) || valueNum < 0) {
+        return res.status(400).json({ error: 'Enter a non-negative numeric Value for unqualified (0 is allowed).' });
+      }
+    }
 
     // REQUIRE value for qualified/closed (server-side validation requested)
     if ((quality === 'qualified' || quality === 'closed') && valueNum === null) {
@@ -1279,9 +1288,9 @@ app.post('/sales/quality-update', requireSecret, express.json(), async (req, res
     }
 
 
-    // set final/zero values
+    // Store the explicitly supplied Sales value.
     if (quality === 'unqualified') {
-      update.conversion_value_final = 0;
+      update.conversion_value_final = valueNum;
     } else if (quality === 'qualified' || quality === 'closed') {
       if (valueNum !== null) {
         update.conversion_value_final = valueNum;

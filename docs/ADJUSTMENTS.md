@@ -25,7 +25,7 @@ RESTATE
 
 Primary use cases:
 
-- Contact becomes Unqualified → RESTATE Contact to 0.
+- Contact becomes Unqualified → RESTATE Contact to the explicit non-negative Sales value (including 0).
 - Qualified value changes → RESTATE Qualified.
 - Closed value changes → RESTATE Closed.
 

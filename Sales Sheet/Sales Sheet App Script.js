@@ -152,7 +152,16 @@ function onEditTrigger(e) {
     const rawValue = row[COL_VALUE - 1];
     let sendValue = null;
     if (quality === 'unqualified') {
-      sendValue = 0;
+      if ((typeof rawValue === 'number' || typeof rawValue === 'string') &&
+          String(rawValue).trim() !== '') {
+        sendValue = Number(rawValue);
+      }
+      if (!Number.isFinite(sendValue) || sendValue < 0) {
+        messageCell.setValue('ERROR. Enter a non-negative numeric Value for unqualified (0 is allowed).');
+        try { messageCell.setFontColor('red'); } catch (_) {}
+        restorePreviousQualitySafe();
+        return;
+      }
     } else {
       if (typeof rawValue === 'number' && !Number.isNaN(rawValue)) sendValue = rawValue;
       else if (rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== '') {

@@ -115,11 +115,22 @@ Do not remove the UI block alone if future product logic needs backward movement
 
 ## Value validation
 
-Unqualified automatically sends `0`.
+Unqualified requires an explicit finite, non-negative value in column H.
+Enter Value first, then edit Quality in column G to submit. Blank, negative,
+and malformed values are rejected in both the Apps Script and backend.
+An explicit `0` remains allowed; positive values restate the original Contact
+to that value. This source change requires deploying `exportsApi` and saving
+the updated Sales Sheet Apps Script before it is live.
 
 Qualified and Closed require a numeric value.
 
 Validation exists both in the Apps Script and backend.
+
+Local controlled test (stubbed Sheets/Firestore, no production writes):
+
+```bat
+node "Helping Functions/test-unqualified-value.js"
+```
 
 ## Conversion-name selection
 
@@ -211,3 +222,56 @@ Never hard-code or place it in sheet cells/documentation.
 ## Exact-name requirement
 
 Every configured Sales tab must contain exact Qualified/Closed action strings. A typo can produce a row Google Ads filters out or cause a later adjustment to target the wrong action.
+
+## Attribution layout preparation (2026-10-28)
+
+The operator confirmed that a second, filtered table starts at J. Do not
+overwrite J:M with attribution values before moving that table.
+
+`Sales Sheet/Prepare Attribution Columns.js` is an additive, manually run
+helper. It is not the importer and does not install triggers or call Firebase.
+It checks the active tab against Config and the supplied A1:I1 headers, then
+inserts four columns before J:
+
+```text
+J = Campaign
+K = Ad group / Asset group
+L = Ad
+M = Campaign type
+N onward = existing filter table
+```
+
+First controlled live check, using a disposable workbook copy:
+
+1. In the copy, open Extensions → Apps Script → + → Script. Add the helper
+   as a separate script file; preserve the existing Sales script.
+2. Select one configured project tab in the workbook, then run
+   `prepareAttributionColumnsForActiveTab` from the editor.
+3. Confirm A:I is unchanged and the filter controls previously at K2:K4 are
+   now at O2:O4. In the supplied sample, output J8 becomes N8.
+4. Inspect the moved FILTER formula. Its three control references must now
+   use O2, O3 and O4; structured references to `Project_Leads_2` must remain.
+   Google Sheets formula rewriting and Table range behavior require live
+   verification; the local stub test cannot prove them.
+5. Select filter values matching a dated source row and verify the output.
+   The supplied CSV has year 2025 selected and a lead with an empty Date;
+   `#N/A` alone does not establish a formula defect.
+6. Run the helper again: it must report that columns are already prepared
+   and must not shift the filter table again.
+
+The helper does not extend the named Google Table or rewrite the FILTER
+logic. Verify those separately before enabling attribution import or
+expecting attribution fields in the filtered output. The filtered results
+remain a view; qualification edits belong in the original Sales table.
+
+Local controlled check:
+
+```bat
+cd /d "D:\Real Estate Projects\Advanced Tracking System\New\WaTrck"
+node "Helping Functions/test-sales-layout.js"
+```
+
+This checks preservation, column movement, repeat-run behavior and guards
+with synthetic cells. It neither edits a real workbook nor tests Google's
+spreadsheet engine. Automatic import, name lookup and PMax asset-group capture
+are not implemented by this preparation step.

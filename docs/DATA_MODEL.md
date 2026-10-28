@@ -348,7 +348,7 @@ Sales writes `conversion_value_final`.
 Unqualified:
 
 ```text
-0
+explicit finite, non-negative Sales value (including 0)
 ```
 
 Qualified/Closed:

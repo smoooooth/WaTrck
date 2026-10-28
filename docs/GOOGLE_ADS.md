@@ -196,7 +196,7 @@ Adjustment Type = RESTATE
 Unqualified:
 
 ```text
-original Contact → RESTATE to 0
+original Contact → RESTATE to explicit non-negative Sales value (including 0)
 ```
 
 Qualified value update:

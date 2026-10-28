@@ -127,11 +127,16 @@ Do not automatically make these match. Confirm intended production migration sta
 
 ## Current projects and verified Contact conversion names
 
+Updated on 2026-10-28: the operator confirmed `_WaTrck_` naming. The
+Contact names below match current landing-page source and the supplied Sales
+Sheet Config export. This updates conversion naming only; the other snapshot
+sections are not a new verification of live production configuration.
+
 ### AIDA
 
 ```text
 PROJECT_ID: AIDA_Oman
-Contact CA: AIDA Oman | WaTrck | Contact
+Contact CA: AIDA Oman_WaTrck_Contact
 Lead estimate: 70 USD
 ```
 
@@ -139,7 +144,7 @@ Lead estimate: 70 USD
 
 ```text
 PROJECT_ID: Trump Plaza Jeddah
-Contact CA: Trump Plaza Jed | WaTrck | Contact
+Contact CA: Trump Plaza Jed_WaTrck_Contact
 Lead estimate: 70 USD
 ```
 
@@ -147,7 +152,7 @@ Lead estimate: 70 USD
 
 ```text
 PROJECT_ID: Trump Park Residences
-Contact CA: Trump Park Res | WaTrck | Contact
+Contact CA: Trump Park Res_WaTrck_Contact
 Lead estimate: 70 USD
 ```
 
@@ -155,11 +160,37 @@ Lead estimate: 70 USD
 
 ```text
 PROJECT_ID: Padel Living Res
-Contact CA: Padel Living | WaTrck | Contact
+Contact CA: Padel Living_WaTrck_Contact
 Lead estimate: 70 USD
 ```
 
-Exact Qualified/Closed names are configured externally in the Sales Sheet `Config` tab and are not hard-coded in the repo. Do not guess them from Contact names.
+### Simaisma Trump Residences
+
+```text
+PROJECT_ID: Simaisma Trump Residences
+Contact CA: Simaisma Trump Res_WaTrck_Contact
+```
+
+### Vision Iconic Tower
+
+```text
+PROJECT_ID: Vision Iconic Tower
+Contact CA: Vision Iconic Tower_WaTrck_Contact
+```
+
+Exact Qualified/Closed names are configured externally in the Sales Sheet `Config` tab. The operator-supplied Config export on 2026-10-28 contains:
+
+| Sales tab | Project ID (verified in landing-page source) | Qualified conversion | Closed conversion |
+| --- | --- | --- | --- |
+| AIDA_Oman | AIDA_Oman | AIDA Oman_WaTrck_Qualified | AIDA Oman_WaTrck_Closed |
+| Tr_Plaza_Jeddah | Trump Plaza Jeddah | Trump Plaza Jed_WaTrck_Qualified | Trump Plaza Jed_WaTrck_Closed |
+| Tr_Park_Residences | Trump Park Residences | Trump Park Res_WaTrck_Qualified | Trump Park Res_WaTrck_Closed |
+| Padel_Living | Padel Living Res | Padel Living_WaTrck_Qualified | Padel Living_WaTrck_Closed |
+| Simaisma_Trump_Res | Simaisma Trump Residences | Simaisma Trump Res_WaTrck_Qualified | Simaisma Trump Res_WaTrck_Closed |
+| Vision_Iconic_Tower | Vision Iconic Tower | Vision Iconic Tower_WaTrck_Qualified | Vision Iconic Tower_WaTrck_Closed |
+
+This is an operator-supplied configuration snapshot, not a live Google Ads
+account inspection. Do not derive action names from naming conventions.
 
 ## Landing-page behavior
 
@@ -194,7 +225,11 @@ Qualified = 500 USD typical
 Closed    = actual closed value
 ```
 
-Unqualified does not create a new action. It RESTATEs Contact to `0` through adjustments.
+Unqualified does not create a new action. It RESTATEs Contact to the explicit
+non-negative Sales value through adjustments; `0` is allowed but no longer
+automatic. Source updated 2026-10-28; deploying `exportsApi` and saving the
+Sales Sheet Apps Script are required to activate this behavior. Live deployment
+has not been verified.
 
 Existing legacy Lead Form/Contact conversion mechanisms remain in place during beta unless explicitly changed.
 

@@ -291,7 +291,7 @@ Creates a new Closed conversion occurrence with the actual closed value.
 
 ### Unqualified
 
-Does not create a separate Unqualified conversion. Instead the original Contact is RESTATEd to `0`.
+Does not create a separate Unqualified conversion. Instead the original Contact is RESTATEd to the explicit non-negative Sales value (`0` is allowed).
 
 ## Adjustment architecture
 
