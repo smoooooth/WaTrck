@@ -11,6 +11,11 @@ Permanent working branch: `main`
 
 These documents were prepared from current `main` observed on **2026-09-16**.
 
+The Sales import/cleanup handover was updated on **2026-10-30** from current
+source and operator-supplied live results. Start with CURRENT_STATE.md's latest
+handover, then SALES_SHEET.md and SALES_PRODUCTION_CUTOVER.md. The SHA list below
+describes the original documentation baseline, not this later implementation.
+
 Code snapshot used during preparation:
 
 ```text
@@ -62,6 +67,7 @@ Google Ads / conversions:
 Sales Sheet:
 
 - `SALES_SHEET.md`
+- `SALES_PRODUCTION_CUTOVER.md`
 - `ADJUSTMENTS.md`
 - `DATA_MODEL.md`
 

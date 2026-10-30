@@ -117,7 +117,25 @@ Requires an installable `onEditTrigger` and Script Property `EXPORT_SECRET`.
 
 Git does not deploy it automatically.
 
-## `Landing_page/`
+## Sales import additions (2026-10-30)
+
+- `Sales Sheet/Lead Import.js`: permanent file in the **Conversions** Apps
+  Script project, despite its repository folder. Runs via the existing job.
+- `Sales Sheet/Prepare Attribution Columns.js`: temporary manual helper in that
+  same project. Keep source locally for future projects; remove from deployed
+  Apps Script after preparing the workbook.
+- `Sales Sheet/Google Ads Name Lookup.js`: deferred Google Ads Scripts source,
+  not an Apps Script file. Lookup consumption in the importer is not yet wired.
+- `functions/test-lead-cleanup.js`: required production module loaded by
+  cleanupFirestoreHttp. It is NOT a disposable test harness.
+- `Helping Functions/test-*.js`: local offline regression tests, never installed
+  into Apps Script. The obsolete `test-sales-layout.js` was removed; its retired
+  helper is replaced by `test-attribution-layout.js` coverage.
+
+The production cutover and minimum deployed file list are in
+[SALES_PRODUCTION_CUTOVER.md](SALES_PRODUCTION_CUTOVER.md).
+
+## `Landing_page/` sources
 
 Contains project snippets/templates, including:
 

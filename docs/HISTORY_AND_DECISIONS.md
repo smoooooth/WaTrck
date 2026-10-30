@@ -255,6 +255,13 @@ Prefer stable business-scoped user identity when available while retaining phone
 
 ## 17. Cleanup policy
 
+Historical decision below, superseded: on 2026-10-30 the operator explicitly
+confirmed keeping the current code's **7-day (168-hour)** unused-click TTL.
+The authenticated test scope additionally removes exact `adhamthabet01` username
+or `_testproduction_` GCLID records regardless of age/used status. The existing
+job now requests `scope=all&dryRun=false`. See CURRENT_STATE.md and DEPLOYMENT.md
+for verified results and the pagination limit; do not restore the old 24-hour rule.
+
 Attribution clicks that never become real contacts are temporary.
 
 Decision:

@@ -854,7 +854,38 @@ function runOnceFetch() {
  );
  }
  try {
- return processBatch();
+ // Each delivery keeps its own write/dedupe/ACK behavior. Attempt Sales even
+ // when conversions has no pending items or throws a recoverable exception.
+ let conversionSummary;
+ let conversionError;
+ let salesSummary;
+ let salesError;
+ try {
+ conversionSummary = processBatch();
+ } catch (error) {
+ conversionError = error;
+ Logger.log('Conversions task failed: %s', String(error && error.message || error));
+ }
+ if (PropertiesService.getScriptProperties().getProperty('SALES_IMPORT_ENABLED') === 'true') {
+ try {
+ if (typeof runSalesImportForExistingJob_ !== 'function') {
+ throw new Error('Add Lead Import.js to this Apps Script project before enabling Sales import.');
+ }
+ salesSummary = runSalesImportForExistingJob_();
+ } catch (error) {
+ salesError = error;
+ Logger.log('Sales import task failed: %s', String(error && error.message || error));
+ }
+ }
+ if (conversionError || salesError) {
+ throw new Error([
+ conversionError ? 'Conversions: ' + String(conversionError.message || conversionError) : '',
+ salesError ? 'Sales import: ' + String(salesError.message || salesError) : ''
+ ].filter(Boolean).join(' | '));
+ }
+ // Preserve the existing response fields; Sales is an optional addition.
+ if (salesSummary) conversionSummary.salesImport = salesSummary;
+ return conversionSummary;
  } catch (error) {
  Logger.log(
  'FATAL EXPORT ERROR: %s',
@@ -878,18 +909,60 @@ function jsonResponse(object) {
  * silently reported as {ok:true}.
  */
 function doGet(e) {
- const summary = runOnceFetch();
- return jsonResponse({
- ok: true,
- summary: summary || {}
- });
+ return runRecordedWebExport_('GET');
 }
 function doPost(e) {
+ return runRecordedWebExport_('POST');
+}
+
+// Last Web App invocation only: manual runOnceFetch does not overwrite this.
+// Diagnostic failures must not change conversion writes, ACKs, or error status.
+function runRecordedWebExport_(method) {
+ const props = PropertiesService.getScriptProperties();
+ const record = {
+ marker: 'sales-web-diagnostic-20261030-1',
+ scriptId: ScriptApp.getScriptId(),
+ method,
+ startedAt: new Date().toISOString(),
+ status: 'started',
+ salesWorkbookId: props.getProperty('SALES_SHEET_FILE_ID'),
+ salesImportEnabled: props.getProperty('SALES_IMPORT_ENABLED'),
+ includeTestUsername: props.getProperty('SALES_INCLUDE_TEST_USERNAME')
+ };
+ const save = () => {
+ try { props.setProperty('LAST_WEB_EXPORT_DIAGNOSTIC', JSON.stringify(record)); }
+ catch (_) { console.error('Could not save Web App diagnostic.'); }
+ };
+ save();
+ try {
  const summary = runOnceFetch();
+ const sales = summary && summary.salesImport;
+ record.status = 'completed';
+ record.finishedAt = new Date().toISOString();
+ record.conversionsFetched = summary && summary.fetched;
+ record.sales = sales ? {
+ confirmedLeads: sales.confirmedLeads, existingRows: sales.existingRows,
+ newRows: sales.newRows, unmappedLeads: sales.unmappedLeads,
+ skippedTabCount: (sales.skippedTabs || []).length
+ } : null;
+ save();
  return jsonResponse({
  ok: true,
  summary: summary || {}
  });
+ } catch (error) {
+ record.status = 'failed';
+ record.finishedAt = new Date().toISOString();
+ save();
+ throw error;
+ }
+}
+
+function inspectLastWebExport() {
+ const value = PropertiesService.getScriptProperties().getProperty('LAST_WEB_EXPORT_DIAGNOSTIC');
+ const result = value ? JSON.parse(value) : { status: 'No diagnostic Web App execution recorded in this project.' };
+ console.log(JSON.stringify(result));
+ return result;
 }
 // ================= ONE-TIME CONFIG / MANUAL UI =================
 /**

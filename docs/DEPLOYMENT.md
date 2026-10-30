@@ -4,6 +4,10 @@ This document describes how to deploy WaTrck components without accidentally dep
 
 Always identify **which component owns the deployment** before running commands.
 
+For the 2026-10-30 Sales import migration from the tested copy to the original
+workbook, follow [SALES_PRODUCTION_CUTOVER.md](SALES_PRODUCTION_CUTOVER.md).
+That guide gives the exact destinations and minimum Apps Script file list.
+
 ---
 
 # Part A — Git / GitHub Desktop
@@ -545,3 +549,55 @@ For a production change:
 5. If it fails, revert that change and redeploy.
 6. Re-test restoration.
 7. Do not add a second unrelated “fix” while the first deployment remains uncertain.
+
+## Protected test-lead cleanup extension (2026-10-30)
+
+Source: functions/test-lead-cleanup.js, called by cleanupFirestoreHttp.
+Operator confirmed preserving the existing 168-hour unused-click TTL.
+
+Existing requests without scope retain the original unused-only behavior.
+New scope=tests removes only tests; scope=all runs tests plus the existing unused
+cleanup. Both new scopes require the existing x-export-secret header and default
+to dryRun=true. Explicit dryRun=false enables deletion. The operator deployed
+the extension and supplied a successful Scheduler request to the existing GET
+target `cleanupFirestoreHttp?scope=all&dryRun=false`. It uses the authorized
+x-export-secret header. Do not create a new cleanup job. Its name/frequency and
+whether it was resumed after simulation still need live confirmation.
+
+Selectors are exact stored whatsapp_username === adhamthabet01 OR a string GCLID
+containing _testproduction_. Profile name Adham is never a selector. Missing
+usernames are not inferred from display names, phone numbers or conversation
+history. No age or used restriction applies to these explicitly identified tests.
+
+Only canonical projects/<project>/clicks/<token> documents and their matching
+tokenIndex are removed. Each transaction re-reads eligibility and index ownership;
+a conflicting index blocks deletion. Conversations/messages, sender indexes,
+Sales/Conversions/Adjustments Sheet rows and Google Ads records are unchanged.
+Database deletion has no automatic undo; the dry run is not a backup.
+
+Each call scans up to 2,000 click documents in document-path order. If morePages
+is true, pass nextCursor as after (URL-encoded) and continue until false. This is
+required for complete coverage; a job that always restarts without consuming
+continuations may miss tests beyond the first 2,000 records. Counts/samples avoid
+logging names and phones. Samples are capped at 100. HTTP 409 indicates per-record
+errors or index conflicts; successful earlier deletions may already have committed.
+Retry is safe for missing/mutated records. Authenticated callers must inspect these
+results, not only transport success. For large datasets use a cursor-aware caller
+before enabling recurring test cleanup.
+
+Verified rollout: the operator's dry run found 18 username tests among 97
+documents. After a successful scheduled cleanup, the follow-up dry run found
+zero matches among 79 documents, zero errors and no remaining pages. The backend
+handles deletion; the Sales feed skips the username by default without deleting
+any Sheet rows. The temporary Apps Script Cleanup Preview helper can be removed.
+
+Future backend changes, if needed, deploy only exportsApi (feed) and/or
+cleanupFirestoreHttp (including its required module) with
+FUNCTIONS_DISCOVERY_TIMEOUT=60. The present Apps Script styling/cutover does not
+require redeploying Firebase. For a new cleanup verification, use
+scope=tests&dryRun=true and the existing secret header; review the body, not just
+HTTP status. Never put the secret in a URL, source, or chat.
+
+Offline check: node "Helping Functions/test-test-lead-cleanup.js". Tests cover exact
+selectors, name-only nonmatches, used test deletion, dry run, transaction races,
+index ownership, pagination, protected HTTP entry and preserved seven-day default.

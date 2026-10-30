@@ -2,6 +2,35 @@
 
 WaTrck should be tested in layers. Do not jump from a code edit straight to a real Google Ads test when a smaller test can prove the same mechanism first.
 
+## Sales import handover checks (2026-10-30)
+
+The operator verified automatic shared-job import into the copied workbook,
+all six native Table migrations, token deduplication, and backend removal of
+18 test records followed by a zero-match dry run. Production Sales cutover is
+pending; see CURRENT_STATE.md and SALES_PRODUCTION_CUTOVER.md. The newest
+120px/dark-grey/10pt/plain styling has offline coverage; visual verification in
+Google Sheets is still required before applying it to the original workbook.
+
+Keep these offline regression checks locally; none belong in deployed Apps Script:
+
+| Command (from repository root) | Coverage |
+| --- | --- |
+| `node "Helping Functions/test-attribution-layout.js"` | Ordered native Table migration, preservation of I1 format/content and existing data, scoped formatting, safe reruns/blocked layouts |
+| `node "Helping Functions/test-sales-import.js"` | Config routing, dedupe, no G:I writes, new-lead cues, phone/username fallback, pinned destination, shared runner and diagnostic |
+| `node "Helping Functions/test-sales-leads.js"` | Backend feed pagination, confirmed/test filtering, username opt-in and string IDs |
+| `node "Helping Functions/test-test-lead-cleanup.js"` | Exact test selectors, protected modes, dry run, transactions/index ownership, pagination and seven-day unused TTL |
+| `node "Helping Functions/test-ads-name-lookup.js"` | Deferred Search lookup cache contract; does not prove live Google Ads authorization/query acceptance |
+| `node "Helping Functions/test-unqualified-value.js"` | Existing qualification/value contract |
+
+The obsolete `test-sales-layout.js` was removed because it tested the retired
+active-tab insertion method. The replacement native Table model test is retained.
+The old timer/Vision-only entry points and active-workbook test fallback were
+removed from Lead Import.js; manual checks now use previewSalesLeadImport and
+importSalesLeadsOnce with an explicit SALES_SHEET_FILE_ID.
+
+`functions/test-lead-cleanup.js` is runtime production code, not a removable test.
+Historical adjustment stress tools remain relevant to their own subsystem.
+
 ## 1. Testing philosophy
 
 Preferred sequence:
@@ -296,7 +325,7 @@ Before changing cleanup behavior, test these separately.
 
 ```text
 used = false
-age >= 24 hours
+age >= 168 hours (7 days)
 ```
 
 Expected:

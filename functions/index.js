@@ -588,6 +588,90 @@ async function requireSecret(req, res, next) {
 
 
 
+// Read-only Sales Sheet feed. Independent of conversion export/ACK flags.
+// Clients must persist a page cursor only after sheet writes are confirmed,
+// dedupe by project + token, and restart scans after reaching the end.
+app.get('/sales/leads', requireSecret, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const project = req.query.project;
+  const after = req.query.after;
+  const limit = req.query.limit === undefined ? 100 : Number(req.query.limit);
+  const testing = req.query.testing === '1';
+  const includeTestUsername = req.query.include_test_username === '1';
+  const validSegment = value => typeof value === 'string' &&
+    value.trim() === value && value.length > 0 &&
+    !value.includes('/') && value !== '.' && value !== '..';
+  const validClickPath = value => typeof value === 'string' &&
+    value.split('/').length === 4 && value.split('/')[0] === 'projects' &&
+    value.split('/')[2] === 'clicks' && value.split('/').every(validSegment);
+  const validGlobalCursor = value => typeof value === 'string' &&
+    value.split('/').length % 2 === 0 && value.split('/').slice(-2)[0] === 'clicks' &&
+    value.split('/').every(validSegment);
+  if ((project !== undefined && !validSegment(project)) ||
+      (after !== undefined && !(project === undefined ? validGlobalCursor(after) : validSegment(after))) ||
+      !Number.isInteger(limit) || limit < 1 || limit > 200 ||
+      (req.query.testing !== undefined && !['0', '1'].includes(req.query.testing)) ||
+      (req.query.include_test_username !== undefined && !['0', '1'].includes(req.query.include_test_username))) {
+    return res.status(400).json({ error: 'Provide optional project, a matching after cursor, limit 1-200, and optional testing=0|1.' });
+  }
+  try {
+    // Scan in document-ID order, then filter. This needs no new compound index
+    // or migration of existing documents. Empty pages may have a next cursor.
+    const collection = project === undefined ? db.collectionGroup('clicks') :
+      db.collection('projects').doc(project).collection('clicks');
+    let query = collection.orderBy(admin.firestore.FieldPath.documentId()).limit(limit);
+    if (after !== undefined) query = query.startAfter(project === undefined ? db.doc(after) : after);
+    const snapshot = await query.get();
+    const items = [];
+    const textOrNull = value => value === undefined || value === null || value === ''
+      ? null : String(value);
+    for (const doc of snapshot.docs) {
+      if (!validClickPath(doc.ref.path)) continue;
+      const data = doc.data();
+      if (data.used !== true) continue;
+      // Excluded by default; authenticated Sales callers may opt in for a test.
+      if (!includeTestUsername && data.whatsapp_username === 'adhamthabet01') continue;
+      const isTest = String(data.gclid || '').includes('_testproduction_');
+      if (isTest !== testing) continue;
+      const timestamp = data.used_at || data.ts;
+      let date = null;
+      if (timestamp) {
+        try {
+          const iso = tsToIso(timestamp);
+          if (Number.isFinite(Date.parse(iso))) date = iso;
+        } catch (_) { /* Missing/invalid dates stay visible as null. */ }
+      }
+      items.push({
+        project_id: doc.ref.path.split('/')[1],
+        contact_conversion_name: textOrNull(data.conversion_name),
+        token: String(doc.id),
+        date,
+        name: textOrNull(data.whatsapp_profile_name),
+        phone: textOrNull(data.whatsapp_phone),
+        username: textOrNull(data.whatsapp_username),
+        quality: textOrNull(data.quality_status),
+        value: typeof data.conversion_value_final === 'number' && Number.isFinite(data.conversion_value_final)
+          ? data.conversion_value_final : null,
+        campaign_id: textOrNull(data.google_campaign_id),
+        adgroup_id: textOrNull(data.google_adgroup_id),
+        ad_id: textOrNull(data.google_ad_id),
+        assetgroup_id: textOrNull(data.google_assetgroup_id)
+      });
+    }
+    return res.json({
+      items,
+      scanned: snapshot.size,
+      next_cursor: snapshot.size === limit ? (project === undefined
+        ? snapshot.docs[snapshot.docs.length - 1].ref.path : snapshot.docs[snapshot.docs.length - 1].id) : null,
+      testing,
+      include_test_username: includeTestUsername
+    });
+  } catch (err) {
+    console.error('sales/leads error', err);
+    return res.status(500).json({ error: 'Unable to read sales leads' });
+  }
+});
+
 /**
  * GET /exports/pending?project=<project>&secret=<secret>
  * Returns list of pending conversions to append to sheet.
@@ -1646,7 +1730,7 @@ every day(24h): 0 0 * *
 (function () {
 
   /*
-   * PRODUCTION RULE:
+   * DEFAULT PRODUCTION RULE (scope=unused):
    *
    * Delete ONLY click docs where:
    *
@@ -1660,8 +1744,8 @@ every day(24h): 0 0 * *
    * - WhatsApp conversations/messages
    * - whatsappSenderIndex
    *
-   * Test conversions are cleaned manually with the dedicated
-   * Helping Functions cleanup script.
+   * Explicit scope=tests or scope=all also enables the protected test-lead
+   * cleanup below. Default scheduling retains the existing unused-only rule.
    */
 
   // ================= CONFIG =================
@@ -2305,6 +2389,11 @@ exports.cleanupFirestoreHttp = functions.https.onRequest(
 
       const q = req.query || {};
       const b = req.body || {};
+      const scope = q.scope === undefined ? (b.scope === undefined ? 'unused' : b.scope) : q.scope;
+      if (!['unused', 'tests', 'all'].includes(scope)) {
+        return res.status(400).json({ ok: false, error: 'scope must be unused, tests, or all' });
+      }
+      if (scope !== 'unused') dryRun = true; // New destructive scope is preview-first.
 
       if (typeof q.dryRun !== 'undefined') {
         dryRun = String(q.dryRun) !== 'false';
@@ -2314,9 +2403,21 @@ exports.cleanupFirestoreHttp = functions.https.onRequest(
           String(b.dryRun) !== 'false';
       }
 
-      const result = await runCleanupLogic({
-        dryRun
-      });
+      if (scope !== 'unused') {
+        // Preserve existing scheduled requests; expanded deletion needs the
+        // existing export secret, and defaults to a non-destructive preview.
+        return await requireSecret(req, res, async () => {
+          const { runTestLeadCleanup } = require('./test-lead-cleanup');
+          const tests = await runTestLeadCleanup(db, admin.firestore.FieldPath.documentId(), {
+            dryRun, after: q.after === undefined ? b.after : q.after
+          });
+          const unused = scope === 'all' ? await runCleanupLogic({ dryRun }) : undefined;
+          return res.status(tests.errors || tests.indexConflicts ? 409 : 200).json({
+            ok: !tests.errors && !tests.indexConflicts, result: { scope, dryRun, tests, unused }
+          });
+        });
+      }
+      const result = await runCleanupLogic({ dryRun });
 
       return res.status(200).json({
         ok: true,

@@ -42,15 +42,10 @@ Firebase whatsappWebhook
     ├── stores conversation/message backup
     └── marks click used=true
             ↓
-Conversions exporter
-            ↓
-Conversions_Sheet
-            ↓
-Google Ads Data Manager
-            ↓
-WaTrck Contact conversion
-            ↓
-Sales Sheet
+Existing Cloud Scheduler → Conversions Apps Script
+    ├── /exports/pending → Conversions_Sheet → Google Ads Data Manager
+    │                                           → WaTrck Contact conversion
+    └── /sales/leads → Config routing → Sales Sheet
             ↓
 sales/quality-update
     ├── Unqualified
@@ -132,7 +127,7 @@ Typical shape:
   "projectId": "AIDA_Oman",
   "ctaId": "floating_whatsapp_widget",
   "lead_value_estimate": 70,
-  "conversion_name": "AIDA Oman | WaTrck | Contact",
+  "conversion_name": "AIDA Oman_WaTrck_Contact",
   "used": false
 }
 ```
@@ -265,6 +260,23 @@ The script writes real/test GCLID rows or no-GCLID review rows, flushes the shee
 
 ## Sales qualification
 
+### Automatic delivery into Sales
+
+The existing Conversions Cloud Scheduler job now also invokes
+`Sales Sheet/Lead Import.js` installed in the SAME Conversions Apps Script
+project. It independently fetches the read-only `/sales/leads` feed and routes
+confirmed `used=true` leads through Config D (original Contact conversion name)
+to Config A (project tab). It does not read the Conversions Sheet as its input
+and does not depend on Google Ads accepting or acknowledging an export.
+
+Token matching prevents duplicate import within a project. Native Table metadata
+bounds writes to A:M. Existing Sales-entered fields remain; G:I are never written
+by this importer. Backend username/test filtering is separate from cleanup.
+The operator verified all six tabs in the copied workbook; original-workbook
+cutover is pending. See SALES_SHEET.md and SALES_PRODUCTION_CUTOVER.md.
+
+### Human qualification
+
 Sales edits trigger `onEditTrigger` in the Sales Sheet Apps Script, which POSTs to:
 
 ```text
@@ -330,17 +342,21 @@ is consumed through Google Ads `Goals → Conversions → Uploads → Schedules`
 
 ## Cleanup
 
-Current production cleanup targets only abandoned attribution clicks:
+Default production cleanup targets abandoned attribution clicks:
 
 ```text
 used === false
 AND
-age >= 24 hours
+age >= 168 hours (7 days)
 ```
 
 It transactionally re-checks before deleting both the click doc and its `tokenIndex` entry.
 
-It is not a conversation-history cleanup and must not delete used conversions.
+It is not a conversation-history cleanup. The default scope must not delete used
+conversions. The operator-authorized test scope added on 2026-10-30 can remove
+used test clicks matching the exact configured username or `_testproduction_`
+marker, with transactional eligibility/index-ownership checks. It requires the
+export secret and explicit scope selection; see DEPLOYMENT.md.
 
 ## Failure-safety principles
 

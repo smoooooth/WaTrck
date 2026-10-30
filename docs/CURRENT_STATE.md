@@ -4,6 +4,67 @@ This document records the current system state known at the context snapshot.
 
 It combines facts verified from `main` with operational decisions confirmed outside the repository. Anything marked external should be re-verified in the relevant service before a production change.
 
+## Latest handover — 2026-10-30
+
+Automatic Sales import now works through the existing Conversions Cloud Scheduler
+job into the TESTED COPY. The operator confirmed automatic arrival of a newly
+simulated lead. Moving the destination to the original Sales workbook is still
+pending; use [SALES_PRODUCTION_CUTOVER.md](SALES_PRODUCTION_CUTOVER.md).
+
+Confirmed during this session:
+
+- Production Sales workbook: `1U4509WWjTjlddPorHusPMuxnCdFZqkSK94zwSqbySVw`.
+- Tested copy / last verified import destination:
+  `159PCMRa4HPBRFuIKRDMB0qdwFn8PylK-T2GceUhCeAk`.
+- Conversions Apps Script ID:
+  `16o8aB_BH0RHuI1VltuEpMjcARrNdEWJQuDY5c_dH6R8Y6fVRso5fBC8M`.
+- Existing job: `Export_Conversions_To_Sheet`, `europe-west4`, project
+  `aida-muscat-wa-tracking`. It invokes the Conversions Web App, which runs both
+  conversion export and Sales import. No separate Sales job/timer is intended.
+- All six copied project tabs were migrated and visually checked: native leads
+  Tables A1:M1117, filtered Tables N7:Z419, formula N8, controls O2:O4.
+- Config D `Contact_Conversion_Name` routes to Config A `TabName`. There were
+  37 eligible non-test leads matching 37 existing rows across all six tabs,
+  with zero skipped tabs/unmapped leads in the supplied 07:29 preview.
+- Duplicate tokens found in the copy were identical accidentally repeated leads
+  and were resolved by the operator. Do not assume the original workbook's
+  duplicates were also fixed. The importer deliberately refuses duplicate tokens.
+- The username toggle was enabled for later simulations. A fresh diagnostic
+  started at `2026-10-30T11:01:00.031Z`, completed at `11:01:15.848Z`, reported
+  the script/copy IDs above, both Sales flags `true`, 43 eligible/existing leads,
+  zero new rows, zero skipped tabs/unmapped leads. The operator subsequently
+  confirmed a new lead imported automatically; its final count was not supplied.
+
+Operational lessons: editor runs use saved source while a versioned `/exec`
+uses its deployed version. Manual imports worked while an older/different Web
+App path returned a 37-lead result without the new diagnostic. Aligning the job
+with the updated deployment resolved the reported automatic-import issue. The
+final URL/version number was not recorded here: inspect the CURRENT deployment
+and job target before changing them; do not reuse an earlier chat URL.
+
+One earlier Scheduler HTTP 500 / zero-second Apps Script failure was followed by
+successful scheduled executions. Its underlying cause was not established.
+Typical observed successful runs took 10–25 seconds. The last supplied cron was
+`*/5 * * * *`, timezone Africa/Cairo. Two-minute scheduling was discussed, not
+confirmed applied. Retry settings were adjusted by the operator during testing;
+inspect their current values before further changes.
+
+Live verification still needed before production cutover:
+
+- Confirm `SALES_INCLUDE_TEST_USERNAME=false` after simulation (last diagnostic
+  showed true) and whether the cleanup job needs resuming after any testing pause.
+- Visually test the NEW 120px/dark-grey-background/10pt/plain source-column style
+  on the copy. Earlier migration was verified; this latest styling was tested
+  locally only. I1's explicit format is restored and its content is never written.
+- Deploy the trimmed importer source (retired timer/Vision-only helpers removed).
+  This local cleanup does not automatically update Apps Script.
+- Complete the original-workbook cutover and verify a fresh scheduled import.
+
+Name lookup authorization and importer name-consumption wiring remain deferred.
+Visible source labels are pending; IDs are preserved in cell notes. PMax
+asset-group capture and spend/CPL/CPQL reports are not completed features.
+See [SALES_SHEET.md](SALES_SHEET.md) for the current code contract.
+
 ## Repository
 
 ```text
@@ -70,6 +131,7 @@ GET  /exports/pending
 POST /exports/mark-exported
 GET  /exports/adjustments-pending
 POST /exports/mark-adjustments-exported
+GET  /sales/leads
 POST /sales/quality-update
 POST /queueAdjustment
 ```
@@ -89,11 +151,26 @@ https://us-central1-aida-muscat-wa-tracking.cloudfunctions.net/cleanupFirestoreH
 Current cleanup code defaults to:
 
 ```text
-unused click TTL = 24 hours
+unused click TTL = 168 hours (7 days; operator confirmed 2026-10-30)
 CLEANUP_DRY_RUN = false
 ```
 
 It only queries explicit `used === false` click documents and transactionally re-checks before deleting the click and matching `tokenIndex` entry.
+
+The default unused-only path is unchanged. Deployed source adds protected
+`scope=tests` / `scope=all` modes to cleanupFirestoreHttp, defaulting to dry run.
+These match exact whatsapp_username `adhamthabet01` or GCLID `_testproduction_`,
+including used leads, and remove only click + matching tokenIndex documents.
+Conversation backups and already-exported Sheet rows are not deleted. This
+extension was deployed by the operator. The existing cleanup job's confirmed
+GET target is `cleanupFirestoreHttp?scope=all&dryRun=false`, with the existing
+export-secret authentication. A live dry run scanned 97 records and matched 18
+username tests; the job returned HTTP 200, and the next dry run scanned 79 with
+zero matches/errors and no next page. This supports removal of those 18 tests.
+The job name/frequency and its current enabled state after simulations are not
+recorded. Each call is bounded to 2,000 scanned records; the simple job does not
+consume continuation cursors. See DEPLOYMENT.md before claiming cleanup covers
+larger datasets.
 
 ## Current WhatsApp / Chatwoot code state
 
@@ -350,7 +427,7 @@ The Google Ads schedule reads the sheet. That is separate from the Apps Script p
 Current code expects Config:
 
 ```text
-TabName | QualifiedConv | ClosedConv
+TabName | Qualified conversion name | Closed conversion name | Contact_Conversion_Name
 ```
 
 Columns:
@@ -361,7 +438,17 @@ F = Date
 G = Quality
 H = Value
 I = Feedback / Message
+J = Campaign
+K = Ad group / Asset group
+L = Ad
+M = Campaign type
 ```
+
+The quality script reads Config A:C; the importer uses A/D and checks the exact
+A1/D1 headers. The scheduled importer never writes Quality, USD Value or Feedback
+(G:I), including on new rows. New C:D both receive yellow `Fresh Lead — Review`.
+Column B uses a phone first, otherwise the stored WhatsApp username. Existing
+Sales-entered details are preserved. Token E is the per-project dedupe key.
 
 Quality:
 

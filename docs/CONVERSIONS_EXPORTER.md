@@ -118,7 +118,8 @@ If quality code is `1` or `2` and `conversion_name_sales` exists, the exporter c
 
 ### Unqualified
 
-No new Unqualified conversion is created. RESTATE-to-zero is handled by Adjustments.
+No new Unqualified conversion is created. Adjustments RESTATE the Contact to
+the explicit non-negative Sales value; zero is permitted but not automatic.
 
 ## Malformed-data blocking
 
@@ -214,3 +215,70 @@ Mixed-currency support would require coordinated review of action configuration,
 ## Cloud Scheduler/Web App
 
 `doGet` and `doPost` call `runOnceFetch()` and return JSON on success. Exceptions propagate, which is desirable for visible failed executions.
+
+## Sales import through the existing job — verified on the copy
+
+Install `Sales Sheet/Lead Import.js` alongside Conversions.js in the SAME
+Conversions Apps Script project. It defines no Web App or onEdit entry points.
+The existing `Export_Conversions_To_Sheet` Cloud Scheduler job calls this
+project's Web App; no additional Sales job or Apps Script timer is needed.
+
+Properties:
+- `SHEET_FILE_ID`: Conversions workbook, unchanged.
+- `EXPORT_SECRET`: existing backend secret, unchanged.
+- `SALES_SHEET_FILE_ID`: explicit, separate Sales destination.
+- `SALES_IMPORT_ENABLED=true`: enable the Sales step; false/missing disables it.
+- `SALES_INCLUDE_TEST_USERNAME=false`: normal production exclusion; exact true
+  temporarily includes adhamthabet01 for an operator simulation.
+
+The advanced Sheets service (`Sheets`) is needed for native Table metadata.
+Config D Contact_Conversion_Name maps the original backend Contact name to
+Config A TabName. Source columns A:M must be prepared. The importer never writes
+Sales G:I, never deletes Sheet rows, and does not acknowledge conversion exports.
+
+`runOnceFetch` holds its existing ScriptLock while attempting processBatch and
+then Sales import. Each exception is caught separately so both tasks are attempted
+before any collected error is rethrown. Sales runs even when no conversions are
+pending. Conversion row building, dedupe, flush-before-ACK and ACK retries are
+unchanged. Both tasks share the runtime budget; this does not isolate forced
+termination. The Sales step acquires no nested lock; manual Sales runs acquire
+the same lock independently.
+
+The operator confirmed all six copied project tabs importing through this job.
+The original Sales workbook has not yet been cut over. Follow
+[SALES_PRODUCTION_CUTOVER.md](SALES_PRODUCTION_CUTOVER.md) for the exact IDs, file
+placement, Config checks, preparation and rollback. Current importer behavior,
+pagination limits and deferred lookup work are in [SALES_SHEET.md](SALES_SHEET.md).
+
+## Web App execution diagnostic
+
+doGet/doPost call `runRecordedWebExport_` around `runOnceFetch`. The wrapper
+preserves the success JSON and exception propagation. It saves
+`LAST_WEB_EXPORT_DIAGNOSTIC` in Script Properties, containing a build marker,
+Script ID, method, start/finish timestamps, status, Sales destination, raw Sales
+toggle values, conversion fetched count and aggregate Sales counts. It stores no
+secret values or lead payloads. Recording failures are caught separately.
+
+Run `inspectLastWebExport` in the Conversions editor to see that record. It is
+a last-call diagnostic, not a complete audit trail. A killed invocation may remain
+started, and a failure before the wrapper starts leaves no new record. Manual
+runOnceFetch does not write it, but manually running doGet/doPost DOES. During a
+Scheduler test, do not invoke those manually; match the record's timestamp to
+the forced job before concluding the job ran successfully.
+
+This diagnostic was live-verified on 2026-10-30. The supplied 13:01 Cairo result
+identified the correct Conversions Script ID and copied Sales destination,
+completed in about 16 seconds, and reported 43 existing eligible leads with no
+unmapped/skipped tabs. The operator then confirmed a fresh lead arrived
+automatically. See CURRENT_STATE.md for the exact recorded IDs/timestamps.
+
+The deployment mismatch lesson: saved editor code and a versioned Web App may
+differ. If editor imports work but the job does not, inspect the deployed version,
+its /exec URL, job target, project Script ID, properties and diagnostic timestamp.
+Do not assume every HTTP 500 has that cause; the earlier isolated failure was
+not diagnosed. A successful Scheduler transport response alone does not prove
+the expected workbook was written.
+
+Keep these diagnostic functions in permanent production code. Remove temporary
+layout/cleanup-preview files after preparation, not this error visibility.
+Offline integration check: `node "Helping Functions/test-sales-import.js"`.
