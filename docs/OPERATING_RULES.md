@@ -2,11 +2,14 @@
 
 These rules capture the operator's preferred way of working and are part of the project's safety model.
 
-## 1. GitHub `main` is source of truth
+## 1. Current working branch is source of truth
+
+Operator override (2026-10-30): work on `Major-update-auto-add-lead-to-sales`;
+leave `main` unchanged. This supersedes prior working-branch instructions.
 
 Whenever exact code matters:
 
-1. inspect `main`,
+1. inspect `Major-update-auto-add-lead-to-sales`,
 2. fetch current state,
 3. read the exact file,
 4. do not answer from historical memory alone.

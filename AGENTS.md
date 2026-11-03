@@ -3,14 +3,18 @@
 This repository is the production source code for **WaTrck — Production Tracking System**.
 
 Repository: `smoooooth/WaTrck`  
-Permanent branch: `main`
+Working branch: `Major-update-auto-add-lead-to-sales`
+
+Operator decision (2026-10-30): all ongoing work stays on this branch.
+Leave `main` unchanged; do not switch, merge or push changes to `main`.
+This supersedes older documentation that requires working on `main`.
 
 ## Mandatory startup procedure
 
 Before changing any code:
 
 1. Confirm the repository is `smoooooth/WaTrck`.
-2. Confirm the current branch is `main`.
+2. Confirm the current branch is `Major-update-auto-add-lead-to-sales`.
 3. Fetch/pull the latest remote state before editing.
 4. Read `docs/00_READ_ME_FIRST.md`, `docs/CURRENT_STATE.md`, `docs/ARCHITECTURE.md`, and `docs/OPERATING_RULES.md`.
 5. Read the subsystem-specific document for the files you intend to touch.
@@ -24,7 +28,7 @@ Before changing any code:
 
 Use this order:
 
-1. Current code on `main`
+1. Current code on `Major-update-auto-add-lead-to-sales`
 2. Current external production configuration explicitly confirmed by the operator
 3. These context documents
 4. Historical notes / old chat context

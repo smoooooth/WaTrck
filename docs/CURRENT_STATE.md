@@ -4,66 +4,73 @@ This document records the current system state known at the context snapshot.
 
 It combines facts verified from `main` with operational decisions confirmed outside the repository. Anything marked external should be re-verified in the relevant service before a production change.
 
-## Latest handover — 2026-10-30
+## Latest handover — 2026-10-30: production Sales import enabled
 
-Automatic Sales import now works through the existing Conversions Cloud Scheduler
-job into the TESTED COPY. The operator confirmed automatic arrival of a newly
-simulated lead. Moving the destination to the original Sales workbook is still
-pending; use [SALES_PRODUCTION_CUTOVER.md](SALES_PRODUCTION_CUTOVER.md).
+Working branch: `Major-update-auto-add-lead-to-sales`. Operator instruction:
+leave `main` unchanged. Older working-branch instructions are superseded.
 
-Confirmed during this session:
+The existing `Export_Conversions_To_Sheet` Cloud Scheduler job now imports
+confirmed leads into the ORIGINAL production Sales workbook as well as running
+the existing Google Ads conversion export.
 
-- Production Sales workbook: `1U4509WWjTjlddPorHusPMuxnCdFZqkSK94zwSqbySVw`.
-- Tested copy / last verified import destination:
-  `159PCMRa4HPBRFuIKRDMB0qdwFn8PylK-T2GceUhCeAk`.
-- Conversions Apps Script ID:
-  `16o8aB_BH0RHuI1VltuEpMjcARrNdEWJQuDY5c_dH6R8Y6fVRso5fBC8M`.
-- Existing job: `Export_Conversions_To_Sheet`, `europe-west4`, project
-  `aida-muscat-wa-tracking`. It invokes the Conversions Web App, which runs both
-  conversion export and Sales import. No separate Sales job/timer is intended.
-- All six copied project tabs were migrated and visually checked: native leads
-  Tables A1:M1117, filtered Tables N7:Z419, formula N8, controls O2:O4.
-- Config D `Contact_Conversion_Name` routes to Config A `TabName`. There were
-  37 eligible non-test leads matching 37 existing rows across all six tabs,
-  with zero skipped tabs/unmapped leads in the supplied 07:29 preview.
-- Duplicate tokens found in the copy were identical accidentally repeated leads
-  and were resolved by the operator. Do not assume the original workbook's
-  duplicates were also fixed. The importer deliberately refuses duplicate tokens.
-- The username toggle was enabled for later simulations. A fresh diagnostic
-  started at `2026-10-30T11:01:00.031Z`, completed at `11:01:15.848Z`, reported
-  the script/copy IDs above, both Sales flags `true`, 43 eligible/existing leads,
-  zero new rows, zero skipped tabs/unmapped leads. The operator subsequently
-  confirmed a new lead imported automatically; its final count was not supplied.
+Verified operator-provided Web App diagnostic:
+- Production Sales ID: `1U4509WWjTjlddPorHusPMuxnCdFZqkSK94zwSqbySVw`.
+- Conversions Script ID: `16o8aB_BH0RHuI1VltuEpMjcARrNdEWJQuDY5c_dH6R8Y6fVRso5fBC8M`.
+- Started `2026-10-30T12:22:34.220Z`, finished `12:23:19.501Z`
+  (14:22–14:23 Cairo), status completed.
+- `SALES_IMPORT_ENABLED=true`, `SALES_INCLUDE_TEST_USERNAME=false`.
+- 37 confirmed leads: 30 existing matches and 7 new rows imported.
+- Zero unmapped leads and zero skipped tabs. No pending conversions in that run.
+- The diagnostic supports the forced-job cutover. A later regular scheduled
+  run and a genuinely new post-cutover lead have not yet been supplied.
 
-Operational lessons: editor runs use saved source while a versioned `/exec`
-uses its deployed version. Manual imports worked while an older/different Web
-App path returned a 37-lead result without the new diagnostic. Aligning the job
-with the updated deployment resolved the reported automatic-import issue. The
-final URL/version number was not recorded here: inspect the CURRENT deployment
-and job target before changing them; do not reuse an earlier chat URL.
+Transfer test immediately before production used fresh copy
+`1a6Z3LtzrgPMZgm_2lI_K2VxO1fwIcC5eUb0MgXhdXfE`. Its job completed
+`2026-10-30T12:10:00.811Z`–`12:10:42.937Z` with the same 30+7 lead
+counts, zero unmapped/skipped tabs and username exclusion enabled. The older
+copy `159PCMRa4HPBRFuIKRDMB0qdwFn8PylK-T2GceUhCeAk` is historical,
+not the current destination.
 
-One earlier Scheduler HTTP 500 / zero-second Apps Script failure was followed by
-successful scheduled executions. Its underlying cause was not established.
-Typical observed successful runs took 10–25 seconds. The last supplied cron was
-`*/5 * * * *`, timezone Africa/Cairo. Two-minute scheduling was discussed, not
-confirmed applied. Retry settings were adjusted by the operator during testing;
-inspect their current values before further changes.
+All six fresh-copy tabs were prepared successfully. The operator visually
+confirmed the corrected styles. Production layout preview then passed for
+all six tabs, and the following import preview found all six native A:M Tables
+ready. Source Table limits were 1117 except Tr_Plaza_Jeddah 1115; filtered
+Tables end at row 419. Original filters move to N8 with controls O2:O4.
 
-Live verification still needed before production cutover:
+Formatting: 120px source columns; dark grey 4 ONLY on J1:M1/W7:Z7 headers,
+white header text, normal Table body fill/black text, 10pt plain text. I1 is
+preserved. Earlier failures were an I1-scoped metadata read hiding the second
+Table and an I1 format comparison failure. Metadata reads are now separated;
+format comparison ignores key order/insignificant rounding while retaining
+real mismatch errors. The revised helper passed the live copy run.
 
-- Confirm `SALES_INCLUDE_TEST_USERNAME=false` after simulation (last diagnostic
-  showed true) and whether the cleanup job needs resuming after any testing pause.
-- Visually test the NEW 120px/dark-grey-background/10pt/plain source-column style
-  on the copy. Earlier migration was verified; this latest styling was tested
-  locally only. I1's explicit format is restored and its content is never written.
-- Deploy the trimmed importer source (retired timer/Vision-only helpers removed).
-  This local cleanup does not automatically update Apps Script.
-- Complete the original-workbook cutover and verify a fresh scheduled import.
+The operator identified identical accidental duplicate Sales rows in the copy
+and cleaned duplicates in production before the successful preview. Token E
+remains the per-project dedupe key; the importer does not auto-delete duplicates.
 
-Name lookup authorization and importer name-consumption wiring remain deferred.
-Visible source labels are pending; IDs are preserved in cell notes. PMax
-asset-group capture and spend/CPL/CPQL reports are not completed features.
-See [SALES_SHEET.md](SALES_SHEET.md) for the current code contract.
+Permanent runtime code: Conversions.js + Lead Import.js in the SAME Conversions
+Apps Script project. Quality editing stays in the production Sales workbook's
+own bound script. G:I are never written by the importer; new C:D receive yellow
+`Fresh Lead — Review`; phone falls back to WhatsApp username only when absent.
+Config D Contact_Conversion_Name routes to Config A TabName.
+
+Pending housekeeping: remove temporary Prepare Attribution Columns / Cleanup
+Preview files from deployed Apps Script if still present, then deploy that lean
+version through the existing deployment. Their repository source stays. Preserve
+Code.gs, Lead Import.gs, the last-Web-export diagnostic and the Sales onEdit handler.
+Confirm any cleanup job paused during simulation was resumed; its current enabled
+state was not supplied.
+
+The final Web App URL/version and current cron were not supplied. Last confirmed
+cron was `*/5 * * * *`, Africa/Cairo; two-minute scheduling was discussed only.
+Use the currently working deployment URL, not an old chat URL. Successful live
+runs ranged from about 10 to 45 seconds; these are observations, not capacity
+guarantees. An earlier isolated HTTP 500 had no confirmed root cause.
+
+Attribution names remain pending and exact IDs remain in cell notes. Google Ads
+lookup authorization/consumption, PMax asset-group capture and spend/CPL/CPQL
+reports remain deferred. Current code contracts: [SALES_SHEET.md](SALES_SHEET.md).
+Short transfer procedure: [SALES_PRODUCTION_CUTOVER.md](SALES_PRODUCTION_CUTOVER.md).
 
 ## Repository
 

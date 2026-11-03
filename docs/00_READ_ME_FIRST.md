@@ -5,7 +5,9 @@ This directory gives Codex durable project context without relying on old conver
 ## Repository identity
 
 Repository: `https://github.com/smoooooth/WaTrck`  
-Permanent working branch: `main`
+Working branch: `Major-update-auto-add-lead-to-sales`.
+Operator confirmed 2026-10-30: leave `main` unchanged. Older `main` working-branch
+instructions in these documents are superseded by AGENTS.md.
 
 ## Verified snapshot
 
@@ -93,7 +95,7 @@ Potential stale/conflicting state:
 
 If information conflicts, use:
 
-1. Current `main` code
+1. Current working-branch code (`Major-update-auto-add-lead-to-sales`)
 2. Explicitly confirmed live production configuration
 3. `CURRENT_STATE.md`
 4. Other context documents

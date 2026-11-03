@@ -272,8 +272,9 @@ and does not depend on Google Ads accepting or acknowledging an export.
 Token matching prevents duplicate import within a project. Native Table metadata
 bounds writes to A:M. Existing Sales-entered fields remain; G:I are never written
 by this importer. Backend username/test filtering is separate from cleanup.
-The operator verified all six tabs in the copied workbook; original-workbook
-cutover is pending. See SALES_SHEET.md and SALES_PRODUCTION_CUTOVER.md.
+The operator verified the copied workbook, then completed original-workbook
+cutover on 2026-10-30 (7 new rows, no skipped/unmapped leads).
+See SALES_SHEET.md and SALES_PRODUCTION_CUTOVER.md.
 
 ### Human qualification
 

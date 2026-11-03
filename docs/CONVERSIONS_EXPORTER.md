@@ -244,8 +244,9 @@ unchanged. Both tasks share the runtime budget; this does not isolate forced
 termination. The Sales step acquires no nested lock; manual Sales runs acquire
 the same lock independently.
 
-The operator confirmed all six copied project tabs importing through this job.
-The original Sales workbook has not yet been cut over. Follow
+The operator confirmed all six copied project tabs importing through this job,
+then completed the production cutover on 2026-10-30 at 14:23 Cairo: 7 new rows,
+30 existing matches, zero unmapped/skipped tabs, username inclusion false. Follow
 [SALES_PRODUCTION_CUTOVER.md](SALES_PRODUCTION_CUTOVER.md) for the exact IDs, file
 placement, Config checks, preparation and rollback. Current importer behavior,
 pagination limits and deferred lookup work are in [SALES_SHEET.md](SALES_SHEET.md).

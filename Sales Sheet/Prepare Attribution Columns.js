@@ -10,22 +10,47 @@ const WATRCK_LAYOUT_HEADERS = ['Name', 'Phone number', 'Interest', 'Notes', 'Tok
 const WATRCK_LAYOUT_EXTRA = ['Campaign', 'Ad group / Asset group', 'Ad', 'Campaign type'];
 const WATRCK_LAYOUT_WIDTH = 120;
 
+function watrckLayoutFormatKey_(value) {
+  // API object key order and insignificant float rounding are not formatting changes.
+  const normalize = item => Array.isArray(item) ? item.map(normalize) :
+    item && typeof item === 'object' ? Object.fromEntries(Object.keys(item).sort().map(key => [key, normalize(item[key])])) :
+      typeof item === 'number' ? Math.round(item * 1e6) / 1e6 : item;
+  return JSON.stringify(normalize(value));
+}
+
 function watrckLayoutHeaderFormat_(info) {
   const grid = (info.data || []).find(data => data.startColumn === 8 && (data.startRow || 0) === 0);
   if (!grid) throw new Error('I1 format snapshot is missing; no layout changes allowed.');
   return JSON.parse(JSON.stringify(grid.rowData?.[0]?.values?.[0]?.userEnteredFormat || {}));
 }
 
+function watrckLayoutMetadata_(workbookId, names) {
+  // Range-limited reads can omit Tables outside I1. Read all Table metadata
+  // separately, then attach only the small I1 formatting snapshots.
+  const metadata = Sheets.Spreadsheets.get(workbookId, {
+    fields: 'sheets(properties,tables,merges)'
+  });
+  const headers = Sheets.Spreadsheets.get(workbookId, {
+    ranges: names.map(name => "'" + name.replace(/'/g, "''") + "'!I1"),
+    fields: 'sheets(properties(sheetId),data(startRow,startColumn,rowData(values(userEnteredFormat))))'
+  });
+  metadata.sheets.forEach(info => {
+    const header = (headers.sheets || []).find(entry => entry.properties.sheetId === info.properties.sheetId);
+    info.data = header ? header.data : [];
+  });
+  return metadata;
+}
+
 function watrckLayoutStyleRequests_(plan, sheetId) {
   const requests = [];
-  // Style only the four attribution columns in each Table, including headers.
+  // Dark fill belongs only to the four attribution HEADERS in each Table.
   [[0, plan.source.range.endRowIndex, 9], [6, plan.filtered.range.endRowIndex, 22]]
     .forEach(([startRowIndex, endRowIndex, startColumnIndex]) => {
       requests.push({ updateDimensionProperties: {
         range: { sheetId, dimension: 'COLUMNS', startIndex: startColumnIndex, endIndex: startColumnIndex + 4 },
         properties: { pixelSize: WATRCK_LAYOUT_WIDTH }, fields: 'pixelSize'
       } }, { repeatCell: {
-        range: { sheetId, startRowIndex, endRowIndex, startColumnIndex, endColumnIndex: startColumnIndex + 4 },
+        range: { sheetId, startRowIndex, endRowIndex: startRowIndex + 1, startColumnIndex, endColumnIndex: startColumnIndex + 4 },
         cell: { userEnteredFormat: {
           backgroundColorStyle: { rgbColor: { red: 67 / 255, green: 67 / 255, blue: 67 / 255 } },
           textFormat: { foregroundColorStyle: { rgbColor: { red: 1, green: 1, blue: 1 } },
@@ -33,6 +58,16 @@ function watrckLayoutStyleRequests_(plan, sheetId) {
         } },
         fields: 'userEnteredFormat.backgroundColorStyle,userEnteredFormat.textFormat.foregroundColorStyle,' +
           'userEnteredFormat.textFormat.fontSize,userEnteredFormat.textFormat.bold,userEnteredFormat.textFormat.italic'
+      } }, { repeatCell: {
+        range: { sheetId, startRowIndex: startRowIndex + 1, endRowIndex, startColumnIndex, endColumnIndex: startColumnIndex + 4 },
+        // Remove the earlier all-column fill so native Table banding shows again.
+        cell: { userEnteredFormat: { textFormat: {
+          foregroundColorStyle: { rgbColor: { red: 0, green: 0, blue: 0 } },
+          fontSize: 10, bold: false, italic: false
+        } } },
+        fields: 'userEnteredFormat.backgroundColor,userEnteredFormat.backgroundColorStyle,' +
+          'userEnteredFormat.textFormat.foregroundColorStyle,userEnteredFormat.textFormat.fontSize,' +
+          'userEnteredFormat.textFormat.bold,userEnteredFormat.textFormat.italic'
       } });
     });
   // Table expansion can inherit header styling. Restore I1's exact original
@@ -150,11 +185,8 @@ function watrckMigrateLayouts_(write, onlyTab) {
     const names = config.getRange(2, 1, config.getLastRow() - 1, 1).getDisplayValues().flat().filter(Boolean);
     if (new Set(names).size !== names.length) throw new Error('Duplicate tabs in Config.');
     if (onlyTab && !names.includes(onlyTab)) throw new Error('Requested tab is not in Config.');
-    const metadataOptions = {
-      ranges: names.filter(name => !onlyTab || name === onlyTab).map(name => "'" + name.replace(/'/g, "''") + "'!I1"),
-      fields: 'sheets(properties,tables,merges,data(startRow,startColumn,rowData(values(userEnteredFormat))))'
-    };
-    const metadata = Sheets.Spreadsheets.get(workbook.getId(), metadataOptions);
+    const selectedNames = names.filter(name => !onlyTab || name === onlyTab);
+    const metadata = watrckLayoutMetadata_(workbook.getId(), selectedNames);
     const plans = [], results = [];
     for (const name of names.filter(name => !onlyTab || name === onlyTab)) {
       try {
@@ -166,7 +198,7 @@ function watrckMigrateLayouts_(write, onlyTab) {
         plans.push({ name, sheet, plan, requests });
         results.push({ tab: name, status: plan.status, leadsRange: 'A1:M' + plan.source.range.endRowIndex,
           filteredRange: 'N7:Z' + plan.filtered.range.endRowIndex, formulaCell: 'N8', controls: 'O2:O4',
-          formatting: 'J:M and W:Z: 120px; dark grey 4 background; white 10pt text; no bold/italic; I1 preserved' });
+          formatting: 'J:M and W:Z: 120px; dark grey 4 headers only; 10pt plain text; normal Table body fill; I1 preserved' });
       } catch (error) {
         results.push({ tab: name, status: 'blocked', reason: error.message });
       }
@@ -182,10 +214,12 @@ function watrckMigrateLayouts_(write, onlyTab) {
         // Atomic batch: an invalid request cannot leave a half-inserted layout.
         Sheets.Spreadsheets.batchUpdate({ requests }, workbook.getId());
         SpreadsheetApp.flush();
-        const after = Sheets.Spreadsheets.get(workbook.getId(), metadataOptions);
+        const after = watrckLayoutMetadata_(workbook.getId(), selectedNames);
         for (const entry of plans) {
           const info = after.sheets.find(s => s.properties.title === entry.name);
-          if (JSON.stringify(watrckLayoutHeaderFormat_(info)) !== JSON.stringify(entry.plan.headerFormat)) {
+          if (watrckLayoutFormatKey_(watrckLayoutHeaderFormat_(info)) !== watrckLayoutFormatKey_(entry.plan.headerFormat)) {
+            console.log(JSON.stringify({ tab: entry.name, i1Expected: entry.plan.headerFormat,
+              i1Actual: watrckLayoutHeaderFormat_(info) }));
             throw new Error('Layout applied, but I1 format verification failed for ' + entry.name + '. Keep imports disabled.');
           }
         }

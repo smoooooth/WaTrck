@@ -48,8 +48,8 @@ C = Closed conversion action
 
 The quality-edit script uses A:C. The separate Lead Import.js now uses D,
 headed Contact_Conversion_Name, to route each lead's original Contact name to
-the tab in A. This is verified on the copy; moving to the original workbook
-requires the cutover guide below. Preserve existing B/C headers and names.
+the tab in A. Copy testing and production cutover passed on 2026-10-30;
+see CURRENT_STATE.md. Preserve existing B/C headers and names.
 
 ## Installable trigger
 
@@ -364,6 +364,10 @@ Use `previewAttributionLayouts`, then `prepareAidaAttributionLayout` for one
 controlled tab, then `prepareRemainingAttributionLayouts` after inspection.
 
 The helper requires exactly the two expected native Tables and headers. It
+reads full Table metadata without range restrictions, separately from the I1
+format snapshots. Combining these into an I1-only read can hide the filtered
+Table and incorrectly block every tab; regression coverage models this case.
+It
 rejects partial layouts, unexpected FILTER/control references, Table footers,
 affected merges and occupied S:V extension space. Table display names with
 spaces are matched to underscore names in structured formulas.
@@ -376,13 +380,18 @@ controls, original non-formula lead values and notes afterward.
 
 The 2026-10-30 formatting update:
 - Sets J:M and W:Z to 120 pixels wide.
-- Within each Table, including headers, applies dark grey 4 background
-  (#434343), white 10-point text, bold=false and italic=false.
+- Applies dark grey 4 background (#434343) and white text ONLY to J1:M1
+  and W7:Z7 headers. Body cells use black text and normal native Table fills;
+  rerunning removes the earlier all-column dark fill. Text is 10pt, not bold/italic.
 - Snapshots and restores I1's explicit cell format; never writes I1's value,
   note, validation or rich text. Other A:I cell formats are outside the style requests.
 - Reapplies formatting to already-prepared tabs without inserting columns.
   Preview still labels them `alreadyPrepared`; apply reports `formatted`.
 - Does not change row heights or the filter controls' formatting.
+
+I1 verification ignores object key order and insignificant numeric rounding in
+API responses. A remaining actual mismatch still stops the helper and logs the
+expected/actual I1 formats. The cause of the first live mismatch is not confirmed.
 
 The earlier layout migration was visually verified on all six copied tabs.
 This newer formatting change has offline coverage but still needs a visual

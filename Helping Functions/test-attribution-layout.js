@@ -52,8 +52,14 @@ const context = vm.createContext({ console: { log() {} },
   Sheets: { Spreadsheets: {
     get(id, options) {
       assert.equal(id, 'copy');
+      if (!options.ranges) {
+        assert.equal(options.fields, 'sheets(properties,tables,merges)');
+        return { sheets: clone(state).map(({ values, formulas, notes, formats, widths, ...info }) => info) };
+      }
       assert.ok(options.ranges.every(range => range.endsWith("'!I1")));
       return { sheets: clone(state).map(({ values, formulas, notes, formats, widths, ...info }) => ({ ...info,
+        // Reproduce range-scoped metadata: the second Table is not returned.
+        tables: info.tables.filter(table => (table.range.startRowIndex || 0) === 0),
         data: [{ startColumn: 8, rowData: [{ values: [{ userEnteredFormat: formats[0][8] }] }] }]
       })) };
     },
@@ -128,7 +134,7 @@ const before = JSON.stringify(state);
 let result = context.previewAttributionLayouts();
 assert.deepEqual(Array.from(result.tabs, t => t.status), ['ready', 'alreadyPrepared']);
 assert.equal(JSON.stringify(state), before); assert.equal(calls, 0);
-const plan = context.watrckLayoutRead_(sheet('AIDA_Oman'), context.Sheets.Spreadsheets.get('copy', { ranges: ["'AIDA_Oman'!I1"] }).sheets[0]);
+const plan = context.watrckLayoutRead_(sheet('AIDA_Oman'), context.watrckLayoutMetadata_('copy', ['AIDA_Oman']).sheets[0]);
 const requests = context.watrckLayoutRequests_(plan, 1, 18);
 assert.equal(requests[1].appendDimension.length, 4, 'ensure space through Z');
 assert.deepEqual(JSON.parse(JSON.stringify(requests[3].updateTable.table.columnProperties[6])), state[0].tables[0].columnProperties[6]);
@@ -150,7 +156,13 @@ for (const s of state) {
   for (const [startRow, endRow, startCol] of [[0, 24, 9], [6, 15, 22]]) {
     for (let r = startRow; r < endRow; r++) for (let c = startCol; c < startCol + 4; c++) {
       const format = s.formats[r][c];
-      assert.deepEqual(format.backgroundColorStyle.rgbColor, { red: 67 / 255, green: 67 / 255, blue: 67 / 255 });
+      if (r === startRow) {
+        assert.deepEqual(format.backgroundColorStyle.rgbColor, { red: 67 / 255, green: 67 / 255, blue: 67 / 255 });
+      } else {
+        assert.equal(format.backgroundColorStyle, undefined, 'body fill cleared for native Table banding');
+        assert.equal(format.backgroundColor, undefined);
+        assert.deepEqual(format.textFormat.foregroundColorStyle.rgbColor, { red: 0, green: 0, blue: 0 });
+      }
       assert.equal(format.textFormat.fontSize, 10);
       assert.equal(format.textFormat.bold, false); assert.equal(format.textFormat.italic, false);
       assert.equal(s.widths[c], 120);
@@ -164,6 +176,10 @@ const after = JSON.stringify(state);
 context.prepareRemainingAttributionLayouts();
 assert.equal(JSON.stringify(state), after, 'reapplying styles never inserts extra columns');
 const count = calls;
+assert.equal(context.watrckLayoutFormatKey_({ textFormat: { bold: true }, backgroundColor: { red: 0.2 } }),
+  context.watrckLayoutFormatKey_({ backgroundColor: { red: 0.20000000001 }, textFormat: { bold: true } }));
+assert.notEqual(context.watrckLayoutFormatKey_({ textFormat: { bold: true } }),
+  context.watrckLayoutFormatKey_({ textFormat: { bold: false } }), 'actual style changes still fail verification');
 state = JSON.parse(before); state[0].values[8][18] = 'Do not overwrite';
 assert.equal(context.previewAttributionLayouts().tabs[0].status, 'blocked');
 assert.throws(() => context.prepareRemainingAttributionLayouts(), /preflight blocked/);
